@@ -14,11 +14,16 @@ test("implements the realtime snapshot and analytics data path", async () => {
   ]);
 
   assert.match(liveRoute, /gbfs\.lyft\.com\/gbfs\/2\.3\/bkn\/en\/station_status\.json/);
+  assert.match(liveRoute, /gbfs\.lyft\.com\/gbfs\/2\.3\/bkn\/en\/vehicle_types\.json/);
+  assert.match(liveRoute, /propulsion_type === "electric_assist"/);
   assert.match(liveRoute, /api\.open-meteo\.com/);
   assert.match(liveRoute, /INSERT OR IGNORE INTO system_snapshots/);
   assert.match(liveRoute, /intervalSeconds: 300/);
   assert.match(analyticsRoute, /mae_30m/);
   assert.match(page, /window\.setInterval\(\(\) => void refresh\(\), 300_000\)/);
+  assert.match(page, /data-testid={`nav-\${item\.id}`}/);
+  assert.match(page, /控制时段与星期，不等于因果/);
+  assert.match(page, /基于起终点坐标，非道路里程/);
   assert.match(page, /当前没有在线 AI 模型/);
   assert.match(page, /无个人ID，仅做群体级分析/);
   assert.equal(JSON.parse(hosting).d1, "DB");
@@ -40,6 +45,14 @@ test("ships verified monthly trip aggregates instead of demo curves", async () =
   assert.equal(data.weekday.length, 7);
   assert.ok(data.regions.length >= 7);
   assert.ok(data.topRoutes.length >= 10);
+  assert.equal(data.distanceBands.length, 5);
+  assert.ok(data.distanceModel.samples > 3_700_000);
+  assert.ok(data.distanceModel.r2 > 0 && data.distanceModel.r2 < 1);
+  assert.equal(data.weather.matchedHours, 720);
+  assert.equal(data.weather.rainImpact.length, 3);
+  assert.equal(data.weather.temperatureImpact.length, 5);
+  assert.ok(data.weather.controlledModelR2 > 0 && data.weather.controlledModelR2 < 1);
+  assert.ok(data.weather.controlledEffects.every((row) => Number.isFinite(row.effectPct)));
 
   const userRides = data.users.reduce((sum, row) => sum + row.rides, 0);
   const bikeRides = data.bikes.reduce((sum, row) => sum + row.rides, 0);
@@ -48,6 +61,9 @@ test("ships verified monthly trip aggregates instead of demo curves", async () =
   assert.ok(data.users.some((row) => row.type === "member"));
   assert.ok(data.users.some((row) => row.type === "casual"));
   assert.ok(data.bikes.some((row) => row.type === "electric_bike"));
+
+  const distanceRides = data.distanceBands.reduce((sum, row) => sum + row.member + row.casual, 0);
+  assert.equal(distanceRides, data.distanceModel.samples);
 
   assert.ok(root.href.startsWith("file:"));
 });

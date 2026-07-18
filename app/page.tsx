@@ -74,13 +74,22 @@ type LiveAnalytics = {
 
 type TripAnalytics = {
   meta: { month: string; rawRows: number; validRides: number; activeDays: number; stations: number; avgDuration: number; filters: string };
-  users: Array<{ type: string; rides: number; share: number; avgDuration: number; weekendShare: number; electricShare: number; peakHour: number }>;
-  bikes: Array<{ type: string; rides: number; share: number; avgDuration: number; memberShare: number }>;
-  regions: Array<{ name: string; starts: number; ends: number; netFlow: number; share: number; memberShare: number; electricShare: number; avgDuration: number; peakHour: number }>;
+  users: Array<{ type: string; rides: number; share: number; avgDuration: number; weekendShare: number; electricShare: number; avgDistance: number; peakHour: number }>;
+  bikes: Array<{ type: string; rides: number; share: number; avgDuration: number; memberShare: number; avgDistance: number }>;
+  regions: Array<{ name: string; starts: number; ends: number; netFlow: number; share: number; memberShare: number; electricShare: number; avgDuration: number; avgDistance: number; peakHour: number }>;
   hourly: Array<{ label: string; member: number; casual: number }>;
   weekday: Array<{ label: string; member: number; casual: number }>;
   timeBands: Array<{ label: string; member: number; casual: number }>;
   durationBands: Array<{ label: string; member: number; casual: number }>;
+  distanceBands: Array<{ label: string; member: number; casual: number; avgDuration: number }>;
+  distanceModel: { samples: number; r2: number; distanceElasticity: number; electricDurationEffectPct: number; casualDurationEffectPct: number; method: string };
+  weather: null | {
+    source: string; matchedHours: number; controlledModelR2: number; method: string;
+    correlations: Array<{ factor: string; correlation: number }>;
+    controlledEffects: Array<{ factor: string; effectPct: number }>;
+    rainImpact: Array<{ label: string; hours: number; avgRides: number; demandIndex: number }>;
+    temperatureImpact: Array<{ label: string; hours: number; avgRides: number; demandIndex: number }>;
+  };
   topRoutes: Array<{ start: string; end: string; rides: number }>;
   topStartStations: Array<{ name: string; rides: number }>;
 };
@@ -311,7 +320,7 @@ export default function Home() {
     <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
       <div className="brand"><span><Bike size={22} /></span><div><strong>BikeFlow AI</strong><small>供需预测 · 调度中台</small></div><button className="nav-close" onClick={() => setMobileNav(false)} aria-label="关闭导航"><X size={17} /></button></div>
       <div className="nav-caption">运营工作台</div>
-      <nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}><item.icon size={18} /><span><b>{item.label}</b><small>{item.note}</small></span><ChevronRight size={13} className="nav-arrow" /></button>)}</nav>
+      <nav>{nav.map((item) => <button data-testid={`nav-${item.id}`} key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}><item.icon size={18} /><span><b>{item.label}</b><small>{item.note}</small></span><ChevronRight size={13} className="nav-arrow" /></button>)}</nav>
       <div className="pipeline-card"><div><span className={`live-dot ${live.source === "fallback" ? "demo" : ""}`} /><b>{live.source === "live" ? "GBFS 实时链路正常" : "实时源回退中"}</b></div><strong>{number.format(stations.length)}</strong><small>当前站点 · {updatedLabel}</small><div className="pipeline"><i className={live.source === "live" ? "done" : "active"} /><i className={live.snapshot?.persisted ? "done" : "active"} /><i className={tripAnalytics ? "done" : "active"} /><i /></div><p>实时源 → D1快照 → 月度聚合 → 模型未上线</p></div>
     </aside>
 
@@ -480,6 +489,18 @@ function HistoryView({ data, liveAnalytics }: { data: TripAnalytics | null; live
     yAxis: { type: "value", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#929bad", fontSize: 8, formatter: (value: number) => `${Math.round(value / 1000)}k` } },
     series: [{ name: "会员", type: "bar", stack: "rides", data: data.durationBands.map((row) => row.member), itemStyle: { color: "#6257e8" } }, { name: "临时用户", type: "bar", stack: "rides", data: data.durationBands.map((row) => row.casual), itemStyle: { color: "#22a893", borderRadius: [5, 5, 0, 0] } }],
   };
+  const distanceOption = {
+    grid: { left: 48, right: 48, top: 36, bottom: 34 }, tooltip: { trigger: "axis" }, legend: { top: 0, right: 8, textStyle: { fontSize: 9 } },
+    xAxis: { type: "category", data: data.distanceBands.map((row) => row.label), axisLabel: { color: "#8d97aa", fontSize: 9 }, axisLine: { show: false }, axisTick: { show: false } },
+    yAxis: [{ type: "value", name: "骑行量", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#929bad", fontSize: 8, formatter: (value: number) => `${Math.round(value / 1000)}k` } }, { type: "value", name: "分钟", splitLine: { show: false }, axisLabel: { color: "#929bad", fontSize: 8 } }],
+    series: [{ name: "会员", type: "bar", stack: "rides", data: data.distanceBands.map((row) => row.member), itemStyle: { color: "#6257e8" } }, { name: "临时用户", type: "bar", stack: "rides", data: data.distanceBands.map((row) => row.casual), itemStyle: { color: "#22a893", borderRadius: [5, 5, 0, 0] } }, { name: "平均时长", type: "line", yAxisIndex: 1, data: data.distanceBands.map((row) => row.avgDuration), smooth: true, symbolSize: 6, lineStyle: { width: 2, color: "#ee8b45" }, itemStyle: { color: "#ee8b45" } }],
+  };
+  const weatherOption = data.weather ? {
+    grid: { left: 50, right: 18, top: 30, bottom: 38 }, tooltip: { trigger: "axis" },
+    xAxis: { type: "category", data: data.weather.rainImpact.map((row) => row.label), axisLabel: { color: "#8d97aa", fontSize: 9 }, axisLine: { show: false }, axisTick: { show: false } },
+    yAxis: { type: "value", min: 50, name: "需求指数", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#929bad", fontSize: 8 } },
+    series: [{ type: "bar", data: data.weather.rainImpact.map((row) => ({ value: row.demandIndex, itemStyle: { color: row.label === "无降雨" ? "#6257e8" : row.label === "小雨" ? "#72a9df" : "#9aa4b8", borderRadius: [7, 7, 0, 0] } })), barWidth: 34, markLine: { silent: true, symbol: "none", data: [{ yAxis: 100 }], lineStyle: { color: "#ee8b45", type: "dashed" }, label: { formatter: "时段基线 100", color: "#a76b36", fontSize: 8 } } }],
+  } : null;
   return <section className="history-view">
     <div className="history-note"><Database size={17} /><div><b>{data.meta.month} Citi Bike 全量骑行明细</b><span>{number.format(data.meta.rawRows)} 条原始记录，清洗后保留 {number.format(data.meta.validRides)} 次有效骑行；口径：{data.meta.filters}</span></div><span className="verified-badge"><Check size={13} />真实数据</span></div>
     <div className="history-kpis kpi-grid"><Kpi icon={Activity} label="有效骑行" value={number.format(data.meta.validRides)} note={`${data.meta.activeDays} 天完整月份`} tone="violet" /><Kpi icon={MapPin} label="活跃站点" value={number.format(data.meta.stations)} note="至少产生一次有效出发" tone="blue" /><Kpi icon={Gauge} label="会员骑行占比" value={pct(member?.share ?? 0)} note={`峰值 ${member?.peakHour ?? "—"}:00`} tone="teal" /><Kpi icon={Zap} label="电助力车占比" value={pct(electric?.share ?? 0)} note={`${number.format(electric?.rides ?? 0)} 次骑行`} tone="amber" /></div>
@@ -488,9 +509,12 @@ function HistoryView({ data, liveAnalytics }: { data: TripAnalytics | null; live
       <article className="card region-demand"><CardHead eyebrow="区域热度" title="区域骑行出发量" note="按起点坐标划分运营区域" /><ReactECharts option={regionOption} style={{ height: 340 }} /></article>
       <article className="card segment-analysis"><CardHead eyebrow="用户结构" title="会员 vs 临时用户" note="无个人ID，仅做群体级分析" /><div className="segment-compare"><div><span>会员</span><strong>{number.format(member?.rides ?? 0)}</strong><p><b>{member?.avgDuration ?? "—"} min</b>平均时长</p><p><b>{pct(member?.weekendShare ?? 0)}</b>周末占比</p><p><b>{pct(member?.electricShare ?? 0)}</b>电助力偏好</p></div><div><span>临时用户</span><strong>{number.format(casual?.rides ?? 0)}</strong><p><b>{casual?.avgDuration ?? "—"} min</b>平均时长</p><p><b>{pct(casual?.weekendShare ?? 0)}</b>周末占比</p><p><b>{pct(casual?.electricShare ?? 0)}</b>电助力偏好</p></div></div></article>
       <article className="card duration-analysis"><CardHead eyebrow="交互偏好代理" title="骑行时长分布" note="以用车行为代替不存在的点击数据" /><ReactECharts option={durationOption} style={{ height: 290 }} /></article>
+      <article className="card distance-analysis"><CardHead eyebrow="距离 × 用户 × 时长" title="直线距离与骑行行为" note="基于起终点坐标，非道路里程" /><ReactECharts option={distanceOption} style={{ height: 300 }} /><p className="method-note">样本 {number.format(data.distanceModel.samples)} 次；距离与时长的对数模型 R² {data.distanceModel.r2.toFixed(3)}。直线距离每增加 1%，时长平均关联增加 {data.distanceModel.distanceElasticity.toFixed(2)}%，用于描述而非路线规划。</p></article>
+      {data.weather && weatherOption && <article className="card weather-analysis"><CardHead eyebrow="天气 × 小时需求" title="降雨条件下的需求变化" note={`${data.weather.matchedHours} 个小时完整匹配`} /><ReactECharts option={weatherOption} style={{ height: 270 }} /><div className="temperature-strip">{data.weather.temperatureImpact.map((row) => <div key={row.label}><span>{row.label}</span><b>{row.demandIndex}</b><small>{row.hours} 小时</small></div>)}</div><p className="method-note">需求指数已按“星期 × 小时”基线标准化，100 代表相同时段平均水平，减少早晚高峰对天气比较的干扰。</p></article>}
+      {data.weather && <article className="card factor-model"><CardHead eyebrow="多因素控制模型" title="天气与租车量的统计关联" note="控制时段与星期，不等于因果" /><div className="effect-list">{data.weather.controlledEffects.map((row) => <div key={row.factor}><span>{row.factor}</span><strong className={row.effectPct < 0 ? "negative" : "positive"}>{row.effectPct > 0 ? "+" : ""}{row.effectPct.toFixed(2)}%</strong><i><u className={row.effectPct < 0 ? "negative" : "positive"} style={{ width: `${Math.min(100, Math.max(5, Math.abs(row.effectPct) * 2))}%` }} /></i></div>)}</div><div className="model-facts"><p><span>模型解释度 R²</span><b>{data.weather.controlledModelR2.toFixed(3)}</b></p><p><span>电助力车时长关联</span><b>{data.distanceModel.electricDurationEffectPct.toFixed(1)}%</b></p><p><span>临时用户时长关联</span><b>+{data.distanceModel.casualDurationEffectPct.toFixed(1)}%</b></p></div><p className="method-note">探索性 OLS：小时骑行量取对数，并加入小时、星期固定效应。活动、节假日等遗漏变量仍可能同时影响天气与需求，因此不能解释为因果效应。</p></article>}
       <article className="card live-availability"><CardHead eyebrow="实时供给结构" title="当前站点可用性" note="来自最新 GBFS 快照" /><div>{(liveAnalytics?.availability ?? []).map((row) => <p key={row.label}><span>{row.label}</span><i><u style={{ width: `${Math.max(4, row.count / Math.max(1, liveAnalytics?.availability.reduce((sum, item) => sum + item.count, 0) ?? 1) * 100)}%` }} /></i><b>{number.format(row.count)}</b></p>)}</div></article>
       <article className="card route-ranking"><CardHead eyebrow="OD 流向" title="热门起终点组合" note="排除起终点相同的骑行" /><div className="route-ranking-list">{data.topRoutes.slice(0, 8).map((route, index) => <div key={`${route.start}-${route.end}`}><em>{index + 1}</em><span><b>{route.start}</b><small>→ {route.end}</small></span><strong>{number.format(route.rides)}</strong></div>)}</div></article>
-      <article className="card finding-card"><span><Sparkles size={18} /></span><div><small>VERIFIED FINDINGS</small><h3>这批真实数据说明了什么</h3><p>会员贡献 {pct(member?.share ?? 0)} 的骑行，但临时用户平均时长更长（{casual?.avgDuration ?? "—"} vs {member?.avgDuration ?? "—"} 分钟）且周末占比更高；电助力车已占 {pct(electric?.share ?? 0)}，调度应单独考虑车型供给。</p></div></article>
+      <article className="card finding-card"><span><Sparkles size={18} /></span><div><small>VERIFIED FINDINGS</small><h3>这批真实数据说明了什么</h3><p>会员贡献 {pct(member?.share ?? 0)} 的骑行；临时用户在控制距离与车型后，骑行时长仍高出约 {data.distanceModel.casualDurationEffectPct.toFixed(1)}%。4 月小时数据中，每增加 1mm 降雨与租车量下降约 {Math.abs(data.weather?.controlledEffects.find((row) => row.factor.includes("降雨"))?.effectPct ?? 0).toFixed(1)}% 相关，但这是控制时段与星期后的统计关联，不等于因果。</p></div></article>
     </div>
   </section>;
 }

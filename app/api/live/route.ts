@@ -16,6 +16,7 @@ type StatusRow = {
 };
 
 type InfoRow = { station_id: string; name: string; lat: number; lon: number; capacity?: number };
+type VehicleTypeRow = { vehicle_type_id: string; propulsion_type?: string };
 
 type Station = {
   id: string;
@@ -47,6 +48,7 @@ type RegionMetric = {
 
 const STATUS_URL = "https://gbfs.lyft.com/gbfs/2.3/bkn/en/station_status.json";
 const INFO_URL = "https://gbfs.lyft.com/gbfs/2.3/bkn/en/station_information.json";
+const VEHICLE_TYPES_URL = "https://gbfs.lyft.com/gbfs/2.3/bkn/en/vehicle_types.json";
 
 const fallbackStations: Station[] = [
   ["demo-1", "W 21 St & 6 Ave", 40.7417, -73.9942, 3, 38, 41],
@@ -174,22 +176,25 @@ async function persistSnapshot(stations: Station[], updatedAt: number, analytics
 
 export async function GET() {
   try {
-    const [statusResponse, infoResponse, weatherResponse] = await Promise.all([
+    const [statusResponse, infoResponse, vehicleTypesResponse, weatherResponse] = await Promise.all([
       fetch(STATUS_URL, { cache: "no-store" }),
       fetch(INFO_URL, { cache: "no-store" }),
+      fetch(VEHICLE_TYPES_URL, { cache: "no-store" }),
       fetch("https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&current=temperature_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=America%2FNew_York", { cache: "no-store" }),
     ]);
     if (!statusResponse.ok || !infoResponse.ok) throw new Error("GBFS unavailable");
 
     const statusJson = await statusResponse.json() as { last_updated?: number; data: { stations: StatusRow[] } };
     const infoJson = await infoResponse.json() as { data: { stations: InfoRow[] } };
+    const vehicleTypesJson = vehicleTypesResponse.ok ? await vehicleTypesResponse.json() as { data: { vehicle_types: VehicleTypeRow[] } } : null;
     const weatherJson = weatherResponse.ok ? await weatherResponse.json() as { current?: Record<string, number | string> } : {};
+    const electricTypeIds = new Set((vehicleTypesJson?.data.vehicle_types ?? []).filter((row) => row.propulsion_type === "electric_assist").map((row) => row.vehicle_type_id));
     const statusMap = new Map(statusJson.data.stations.map((row) => [row.station_id, row]));
     const updatedAt = statusJson.last_updated ?? Math.floor(Date.now() / 1000);
     const stations = infoJson.data.stations.map((info): Station => {
       const status = statusMap.get(info.station_id);
       const vehicles = status?.vehicle_types_available ?? [];
-      const ebikes = vehicles.filter((vehicle) => /electric|ebike/i.test(vehicle.vehicle_type_id)).reduce((sum, vehicle) => sum + vehicle.count, 0);
+      const ebikes = vehicles.filter((vehicle) => electricTypeIds.has(vehicle.vehicle_type_id) || /electric|ebike/i.test(vehicle.vehicle_type_id)).reduce((sum, vehicle) => sum + vehicle.count, 0);
       return {
         id: info.station_id, name: info.name, lat: info.lat, lon: info.lon,
         capacity: info.capacity ?? (status?.num_bikes_available ?? 0) + (status?.num_docks_available ?? 0),

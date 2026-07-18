@@ -313,6 +313,27 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(92, 81, 227,
 .segment-compare > div > strong { display: block; margin: 12px 0 18px; font-size: 22px; letter-spacing: -.04em; }
 .segment-compare p { min-height: 37px; margin: 0; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(38,52,88,.07); color: #8e98aa; font-size: 8px; }
 .segment-compare p b { color: #3d495f; font-size: 10px; }
+.distance-analysis, .weather-analysis, .factor-model { min-height: 405px !important; }
+.method-note { margin: 0 18px 17px; padding: 11px 12px; border-radius: 11px; background: #f6f7fb; color: #7b869a; font-size: 8px; line-height: 1.75; }
+.temperature-strip { margin: -2px 18px 12px; display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; }
+.temperature-strip > div { padding: 8px 5px; border: 1px solid #eceef4; border-radius: 9px; text-align: center; background: #fafbfe; }
+.temperature-strip span, .temperature-strip small { display: block; color: #8b95a8; font-size: 7px; }
+.temperature-strip b { display: block; margin: 5px 0 3px; color: var(--primary); font-size: 11px; }
+.effect-list { padding: 8px 18px 4px; }
+.effect-list > div { min-height: 62px; display: grid; grid-template-columns: 1fr 70px; align-items: center; gap: 6px 12px; border-bottom: 1px solid var(--line); }
+.effect-list span { color: #5f6c82; font-size: 9px; }
+.effect-list strong { font-size: 12px; text-align: right; }
+.effect-list strong.positive { color: #168b78; }
+.effect-list strong.negative { color: #d36e52; }
+.effect-list i { grid-column: 1/3; height: 5px; margin-top: -10px; overflow: hidden; border-radius: 4px; background: #eff1f5; }
+.effect-list i u { height: 100%; display: block; border-radius: 4px; }
+.effect-list i u.positive { background: linear-gradient(90deg,#54c0ae,#168b78); }
+.effect-list i u.negative { background: linear-gradient(90deg,#f1b28c,#d36e52); }
+.model-facts { margin: 12px 18px; display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.model-facts p { margin: 0; padding: 10px; border-radius: 10px; background: #f7f8fb; }
+.model-facts span, .model-facts b { display: block; }
+.model-facts span { color: #8b95a8; font-size: 7px; }
+.model-facts b { margin-top: 6px; color: #354158; font-size: 12px; }
 .live-availability > div:last-child { padding: 8px 18px 18px; }
 .live-availability p { min-height: 42px; margin: 0; display: grid; grid-template-columns: 62px 1fr 35px; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); }
 .live-availability p span { color: #68748a; font-size: 8px; }
@@ -450,6 +471,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(92, 81, 227,
   .corridor-card { grid-column: auto; }
   .corridor-list { grid-template-columns: 1fr; }
   .route-ranking-list { grid-template-columns: 1fr; }
+  .temperature-strip { grid-template-columns: repeat(3,1fr); }
+  .model-facts { grid-template-columns: 1fr; }
   .model-status { padding: 20px; grid-template-columns: 48px 1fr; }
   .model-orb { width: 46px; height: 46px; }
   .model-status h2 { font-size: 18px; }
