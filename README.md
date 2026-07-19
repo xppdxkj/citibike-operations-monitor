@@ -8,7 +8,7 @@
 
 本项目当前使用可解释的库存阈值与距离规则生成风险和调度候选，不把规则结果包装成机器学习预测。
 
-**在线体验：** [Citi Bike Operations Monitor](https://bikeflow-ai-nyc.bennett-mcleodngq.chatgpt.site)
+**在线体验：** [Citi Bike Operations Monitor](https://citibike-operations-monitor.onrender.com)
 
 ## 项目截图
 
@@ -189,12 +189,12 @@ pnpm test
 
 ## 部署说明
 
-该项目包含服务端实时接口和数据库写入，不能只部署为 GitHub Pages 静态网页。当前版本已部署在 Cloudflare Workers 运行环境，并绑定 D1 数据库：
+该项目包含服务端实时接口，不能只部署为 GitHub Pages 静态网页。当前公开版本部署在 Render：
 
-- 生产地址：[https://bikeflow-ai-nyc.bennett-mcleodngq.chatgpt.site](https://bikeflow-ai-nyc.bennett-mcleodngq.chatgpt.site)
+- 生产地址：[https://citibike-operations-monitor.onrender.com](https://citibike-operations-monitor.onrender.com)
 - 访问权限：公开，无需登录；
 - 实时链路：页面加载时由服务端请求 Citi Bike GBFS 与 Open-Meteo，不要求访问者连接外网数据源；
-- 持久化：页面在线时按 5 分钟时间桶写入 D1 快照。
+- 数据边界：Render 版本没有 Cloudflare D1，因此保留实时运营、风险、调度复核与月度经营分析，历史快照轨迹会明确显示为不可用。
 
 若要升级为无人访问时也持续采集的 24×7 版本，还需要：
 
@@ -202,9 +202,9 @@ pnpm test
 2. 控制快照粒度和保留周期，避免写入量超过免费额度；
 3. 为外部地图底图准备稳定的备用资源。
 
-### Render 兼容部署
+### Render 部署
 
-仓库根目录包含 `render.yaml`，可在 Render 中以免费 Node Web Service 部署。Render 版本由服务端代取 Citi Bike GBFS 与 Open-Meteo，访问者的浏览器不会直接请求这些上游接口。由于 Render 不提供 Cloudflare D1，Render 版本保留实时运营、风险、调度复核与月度经营分析，但历史快照轨迹会明确显示为不可用。
+仓库根目录包含 `render.yaml`，可在 Render 中以免费 Node Web Service 部署。服务端代取 Citi Bike GBFS 与 Open-Meteo，访问者的浏览器不会直接请求这些上游接口。
 
 Render 免费实例闲置后会休眠，首次访问可能需要等待唤醒；`onrender.com` 也不承诺中国大陆网络质量，发布后必须使用关闭 VPN 的中国大陆移动网络和宽带分别验收。若要求稳定国内访问，应绑定自有域名，并使用中国香港服务器，或使用已备案域名和中国大陆云服务。
 
