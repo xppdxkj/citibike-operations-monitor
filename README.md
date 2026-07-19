@@ -8,6 +8,22 @@
 
 本项目当前使用可解释的库存阈值与距离规则生成风险和调度候选，不把规则结果包装成机器学习预测。
 
+**在线体验：** [Citi Bike Operations Monitor](https://bikeflow-ai-nyc.bennett-mcleodngq.chatgpt.site)
+
+## 项目截图
+
+### 实时运营中心
+
+![实时运营中心桌面端](docs/screenshots/overview-desktop.png)
+
+### 多维经营分析
+
+![多维经营分析桌面端](docs/screenshots/business-analysis-desktop.png)
+
+### 手机端适配
+
+<img src="docs/screenshots/overview-mobile.png" alt="实时运营中心手机端" width="390" />
+
 ## 项目状态
 
 | 能力 | 当前状态 | 说明 |
@@ -173,13 +189,18 @@ pnpm test
 
 ## 部署说明
 
-该项目包含服务端实时接口和数据库写入，不能只部署为 GitHub Pages 静态网页。推荐将 GitHub 用作源码与自动部署入口，并将运行环境部署到 Cloudflare Workers；公开部署时还需要：
+该项目包含服务端实时接口和数据库写入，不能只部署为 GitHub Pages 静态网页。当前版本已部署在 Cloudflare Workers 运行环境，并绑定 D1 数据库：
 
-1. 创建并绑定 D1 数据库；
-2. 应用 `drizzle/` 下的迁移；
-3. 配置每 5 分钟采集的 Cron Trigger；
-4. 控制快照粒度和保留周期，避免写入量超过免费额度；
-5. 将地图底图改为稳定的同域资源或可公开访问的地图服务。
+- 生产地址：[https://bikeflow-ai-nyc.bennett-mcleodngq.chatgpt.site](https://bikeflow-ai-nyc.bennett-mcleodngq.chatgpt.site)
+- 访问权限：公开，无需登录；
+- 实时链路：页面加载时由服务端请求 Citi Bike GBFS 与 Open-Meteo，不要求访问者连接外网数据源；
+- 持久化：页面在线时按 5 分钟时间桶写入 D1 快照。
+
+若要升级为无人访问时也持续采集的 24×7 版本，还需要：
+
+1. 配置每 5 分钟采集的 Cron Trigger；
+2. 控制快照粒度和保留周期，避免写入量超过免费额度；
+3. 为外部地图底图准备稳定的备用资源。
 
 ## 数据与结论边界
 
