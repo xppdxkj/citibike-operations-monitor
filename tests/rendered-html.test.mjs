@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../", import.meta.url);
@@ -113,4 +113,35 @@ test("ships verified monthly trip aggregates instead of demo curves", async () =
   assert.equal(regionStarts, data.meta.validRides);
 
   assert.ok(root.href.startsWith("file:"));
+});
+
+test("documents the verified product surface with complete screenshots", async () => {
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  const screenshots = [
+    "overview-map-live.jpg",
+    "station-diagnostics.jpg",
+    "dispatch-workbench.jpg",
+    "analysis-demand.jpg",
+    "analysis-behavior.jpg",
+    "analysis-weather-distance.jpg",
+    "analysis-weather.jpg",
+    "model-readiness.jpg",
+    "mobile-overview.jpg",
+    "mobile-map.jpg",
+  ];
+
+  assert.match(readme, /citibike-operations-monitor\.onrender\.com/);
+  assert.match(readme, /已验证的分析结论/);
+  assert.match(readme, /已实现能力与边界/);
+  assert.match(readme, /LightGBM 在线预测 \| 未实现/);
+  assert.doesNotMatch(readme, /overview-desktop\.png/);
+  assert.doesNotMatch(readme, /business-analysis-desktop\.png/);
+  assert.doesNotMatch(readme, /overview-mobile\.png/);
+
+  await Promise.all(
+    screenshots.map(async (name) => {
+      assert.match(readme, new RegExp(`docs/screenshots/${name.replace(".", "\\.")}`));
+      await access(new URL(`../docs/screenshots/${name}`, import.meta.url));
+    }),
+  );
 });
