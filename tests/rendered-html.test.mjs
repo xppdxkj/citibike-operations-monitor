@@ -35,7 +35,7 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.match(renderConfig, /SKIP_INSTALL_DEPS/);
   assert.match(pnpmWorkspace, /strictDepBuilds: true/);
   for (const dependency of ["esbuild", "sharp", "unrs-resolver", "workerd"]) {
-    assert.match(pnpmWorkspace, new RegExp(`- ${dependency}`));
+    assert.match(pnpmWorkspace, new RegExp(`${dependency}: true`));
   }
   assert.match(page, /window\.setInterval\(\(\) => void refresh\(\), 300_000\)/);
   assert.match(page, /data-testid={`nav-\${item\.id}`}/);
