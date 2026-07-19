@@ -181,7 +181,7 @@ function basemapStyle(): maplibregl.StyleSpecification {
         type: "raster",
         // Keep map requests on the same origin. The server fetches CARTO so mobile
         // browsers do not need a second, sometimes slow or blocked, CDN connection.
-        tiles: ["/api/map-tiles/{z}/{x}/{y}"],
+        tiles: ["/api/map-tiles/{z}/{x}/{y}?v=mobile-map-2"],
         tileSize: 256,
         attribution: "© OpenStreetMap © CARTO",
       },

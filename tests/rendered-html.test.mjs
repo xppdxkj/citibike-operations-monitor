@@ -42,7 +42,7 @@ test("implements the realtime snapshot and analytics data path", async () => {
     assert.match(pnpmWorkspace, new RegExp(`${dependency}: true`));
   }
   assert.match(page, /window\.setInterval\(\(\) => void refresh\(\), 300_000\)/);
-  assert.match(page, /tiles: \["\/api\/map-tiles\/\{z\}\/\{x\}\/\{y\}"\]/);
+  assert.match(page, /tiles: \["\/api\/map-tiles\/\{z\}\/\{x\}\/\{y\}\?v=mobile-map-2"\]/);
   assert.match(page, /latestGeojsonRef\.current = geojson/);
   assert.match(page, /map\.on\("style\.load"/);
   assert.match(page, /new ResizeObserver/);
