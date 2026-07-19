@@ -32,6 +32,7 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.match(renderConfig, /runtime: node/);
   assert.match(renderConfig, /plan: free/);
   assert.match(renderConfig, /dist\/standalone\/server\.js/);
+  assert.match(renderConfig, /SKIP_INSTALL_DEPS/);
   assert.match(pnpmWorkspace, /strictDepBuilds: true/);
   for (const dependency of ["esbuild", "sharp", "unrs-resolver", "workerd"]) {
     assert.match(pnpmWorkspace, new RegExp(`- ${dependency}`));

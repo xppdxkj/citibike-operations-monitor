@@ -13,3 +13,5 @@ services:
         value: 22.14.0
       - key: HOST
         value: 0.0.0.0
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
