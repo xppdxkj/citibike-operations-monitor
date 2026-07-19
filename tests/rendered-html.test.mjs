@@ -19,7 +19,11 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.match(liveRoute, /api\.open-meteo\.com/);
   assert.match(liveRoute, /INSERT OR IGNORE INTO system_snapshots/);
   assert.match(liveRoute, /intervalSeconds: 300/);
+  assert.match(liveRoute, /serviceStateFor/);
+  assert.match(liveRoute, /station\.serviceState !== "operational"/);
+  assert.match(liveRoute, /const operational = stations\.filter/);
   assert.match(analyticsRoute, /mae_30m/);
+  assert.match(analyticsRoute, /WHERE station_id = \?/);
   assert.match(page, /window\.setInterval\(\(\) => void refresh\(\), 300_000\)/);
   assert.match(page, /data-testid={`nav-\${item\.id}`}/);
   assert.match(page, /原始相关与控制后关联/);
@@ -29,11 +33,18 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.match(page, /data-testid="selected-task-detail"/);
   assert.match(page, /批准建议/);
   assert.match(page, /库存不变对照法/);
+  assert.match(page, /真实库存轨迹/);
+  assert.match(page, /只展示真实快照/);
+  assert.match(page, /stationHistory/);
+  assert.doesNotMatch(page, /库存不变对照线/);
+  assert.doesNotMatch(page, /const forecast = points\.map/);
   assert.doesNotMatch(page, /首个候选配对/);
   assert.doesNotMatch(page, /finding-card/);
   assert.match(page, /基于起终点坐标，非道路里程/);
   assert.match(page, /当前没有在线 AI 模型/);
   assert.match(page, /无个人ID，仅做群体级分析/);
+  assert.match(page, /一周需求与用户结构/);
+  assert.match(page, /区域多维画像/);
   assert.equal(JSON.parse(hosting).d1, "DB");
   assert.match(migration, /CREATE TABLE `system_snapshots`/);
   assert.match(migration, /CREATE TABLE `region_snapshots`/);
@@ -72,6 +83,13 @@ test("ships verified monthly trip aggregates instead of demo curves", async () =
 
   const distanceRides = data.distanceBands.reduce((sum, row) => sum + row.member + row.casual, 0);
   assert.equal(distanceRides, data.distanceModel.samples);
+
+  const weekdayRides = data.weekday.reduce((sum, row) => sum + row.member + row.casual, 0);
+  const timeBandRides = data.timeBands.reduce((sum, row) => sum + row.member + row.casual, 0);
+  const regionStarts = data.regions.reduce((sum, row) => sum + row.starts, 0);
+  assert.equal(weekdayRides, data.meta.validRides);
+  assert.equal(timeBandRides, data.meta.validRides);
+  assert.equal(regionStarts, data.meta.validRides);
 
   assert.ok(root.href.startsWith("file:"));
 });

@@ -21,7 +21,6 @@ import {
   Layers3,
   MapPin,
   Menu,
-  Navigation,
   RefreshCw,
   Route,
   Search,
@@ -49,6 +48,7 @@ type Station = {
   ebikes: number;
   online: boolean;
   lastReported: number;
+  serviceState: "operational" | "offline" | "stale" | "invalid_capacity";
 };
 
 type LivePayload = {
@@ -66,7 +66,7 @@ type LiveRegion = {
 };
 
 type LiveAnalytics = {
-  totals: { bikes: number; docks: number; ebikes: number; disabled: number; onlineStations: number; emptyStations: number; fullStations: number; staleStations: number };
+  totals: { bikes: number; docks: number; ebikes: number; disabled: number; onlineStations: number; operationalStations: number; offlineStations: number; emptyStations: number; fullStations: number; staleStations: number; invalidCapacityStations: number };
   regions: LiveRegion[];
   availability: Array<{ label: string; count: number }>;
   freshness: { sourceAgeSeconds: number; staleStations: number; completeness: number; measuredAt: number };
@@ -100,6 +100,18 @@ type SnapshotAnalytics = {
   system: Array<Record<string, number>>;
   regions: Array<Record<string, number | string>>;
   baseline: { pairs?: number; mae_30m?: number | null };
+  station: StationSnapshot[];
+};
+
+type StationSnapshot = {
+  snapshot_at: number;
+  station_id: string;
+  station_name: string;
+  bikes: number;
+  docks: number;
+  capacity: number;
+  risk_type: string;
+  risk_score: number;
 };
 
 type DerivedStation = Station & {
@@ -108,6 +120,7 @@ type DerivedStation = Station & {
   riskType: RiskType;
   projectedBikes: number;
   change: number;
+  actionable: boolean;
 };
 
 type RebalanceTask = {
@@ -135,15 +148,15 @@ function straightLineKm(a: Pick<Station, "lat" | "lon">, b: Pick<Station, "lat" 
 
 const nav = [
   { id: "overview" as const, label: "实时运营", note: "全网状态与风险", icon: Gauge },
-  { id: "forecast" as const, label: "站点诊断", note: "库存、阈值与对照", icon: TrendingUp },
+  { id: "forecast" as const, label: "站点诊断", note: "库存、趋势与阈值", icon: TrendingUp },
   { id: "dispatch" as const, label: "调度复核", note: "配对、地图与详情", icon: Route },
   { id: "history" as const, label: "经营分析", note: "区域、用户与偏好", icon: CalendarRange },
-  { id: "model" as const, label: "模型中心", note: "效果、解释与漂移", icon: BrainCircuit },
+  { id: "model" as const, label: "模型中心", note: "数据、基线与上线门槛", icon: BrainCircuit },
 ];
 
 const viewMeta: Record<ViewKey, { eyebrow: string; title: string; subtitle: string }> = {
   overview: { eyebrow: "LIVE OPERATIONS", title: "实时运营中心", subtitle: "把当前库存告警、站点详情和调度复核入口放在同一张地图上" },
-  forecast: { eyebrow: "STATION DIAGNOSTICS", title: "站点库存诊断", subtitle: "查看实时库存、风险依据，以及在线模型上线前的简单对照值" },
+  forecast: { eyebrow: "STATION DIAGNOSTICS", title: "站点库存诊断", subtitle: "查看真实库存轨迹、服务状态、阈值告警和数据积累情况" },
   dispatch: { eyebrow: "REBALANCE REVIEW", title: "调度复核工作台", subtitle: "逐条检查调出站、调入站、距离、数量和搬运后的库存变化" },
   history: { eyebrow: "BUSINESS ANALYTICS", title: "骑行业务分析", subtitle: "基于真实月度骑行明细分析区域热度、用户结构、车辆偏好与出行规律" },
   model: { eyebrow: "MODEL OPS", title: "模型与数据监控", subtitle: "明确区分实时数据、库存不变对照法和待训练模型" },
@@ -160,20 +173,30 @@ const number = new Intl.NumberFormat("zh-CN");
 const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-function deriveStation(station: Station, _horizon: number): DerivedStation {
-  const capacity = Math.max(1, station.capacity || station.bikes + station.docks);
-  const ratio = station.bikes / capacity;
-  const lower = Math.max(3, Math.round(capacity * 0.12));
-  const upper = Math.max(3, Math.round(capacity * 0.12));
+function deriveStation(station: Station): DerivedStation {
+  const actionable = station.serviceState === "operational";
+  const capacity = actionable ? station.capacity : Math.max(0, station.capacity);
+  const safeCapacity = Math.max(1, capacity);
+  const ratio = station.bikes / safeCapacity;
+  const lower = Math.max(3, Math.round(safeCapacity * 0.12));
+  const upper = Math.max(3, Math.round(safeCapacity * 0.12));
   const shortagePressure = clamp((lower - station.bikes) / lower, 0, 1);
   const overflowPressure = clamp((upper - station.docks) / upper, 0, 1);
-  const riskType: RiskType = shortagePressure > 0 ? "shortage" : overflowPressure > 0 ? "overflow" : "balanced";
+  const riskType: RiskType = !actionable ? "balanced" : shortagePressure > 0 ? "shortage" : overflowPressure > 0 ? "overflow" : "balanced";
   const baseRisk = Math.max(shortagePressure, overflowPressure) * 78;
   const uncertainty = riskType === "balanced" ? Math.max(0, 22 - Math.abs(ratio - 0.5) * 55) : 18;
-  const risk = clamp(Math.round(baseRisk + uncertainty), 4, 99);
+  const risk = actionable ? clamp(Math.round(baseRisk + uncertainty), 4, 99) : 0;
   const change = 0;
   const projectedBikes = station.bikes;
-  return { ...station, capacity, ratio, risk, riskType, projectedBikes, change };
+  return { ...station, capacity, ratio, risk, riskType, projectedBikes, change, actionable };
+}
+
+function serviceStateLabel(station?: Pick<Station, "serviceState">) {
+  if (!station) return "未选择";
+  if (station.serviceState === "operational") return "服务正常";
+  if (station.serviceState === "invalid_capacity") return "容量数据无效";
+  if (station.serviceState === "stale") return "数据超过10分钟未更新";
+  return "站点暂停服务";
 }
 
 function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[]; selectedId: string | null; onSelect: (id: string) => void }) {
@@ -185,9 +208,10 @@ function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[
     features: stations.map((station) => ({
       type: "Feature" as const,
       geometry: { type: "Point" as const, coordinates: [station.lon, station.lat] },
-      properties: { id: station.id, name: station.name, bikes: station.bikes, docks: station.docks, risk: station.risk, riskType: station.riskType, selected: station.id === selectedId ? 1 : 0 },
+      properties: { id: station.id, name: station.name, bikes: station.bikes, docks: station.docks, risk: station.risk, riskType: station.riskType, serviceState: station.serviceState, selected: station.id === selectedId ? 1 : 0 },
     })),
   }), [stations, selectedId]);
+  const initialGeojsonRef = useRef(geojson);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -212,14 +236,14 @@ function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.on("load", () => {
-      map.addSource("stations", { type: "geojson", data: geojson });
+      map.addSource("stations", { type: "geojson", data: initialGeojsonRef.current });
       map.addLayer({
         id: "station-glow",
         type: "circle",
         source: "stations",
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["get", "risk"], 0, 5, 100, 15],
-          "circle-color": ["match", ["get", "riskType"], "shortage", "#ef6a5b", "overflow", "#f0a33a", "#4d78f0"],
+          "circle-color": ["match", ["get", "serviceState"], "operational", ["match", ["get", "riskType"], "shortage", "#ef6a5b", "overflow", "#f0a33a", "#4d78f0"], "#8d97aa"],
           "circle-opacity": 0.13,
           "circle-blur": 0.6,
         },
@@ -230,7 +254,7 @@ function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[
         source: "stations",
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 2.5, 14, 7],
-          "circle-color": ["match", ["get", "riskType"], "shortage", "#ef6a5b", "overflow", "#f0a33a", "#4d78f0"],
+          "circle-color": ["match", ["get", "serviceState"], "operational", ["match", ["get", "riskType"], "shortage", "#ef6a5b", "overflow", "#f0a33a", "#4d78f0"], "#8d97aa"],
           "circle-stroke-color": "#ffffff",
           "circle-stroke-width": 1.2,
           "circle-opacity": 0.92,
@@ -278,7 +302,6 @@ export default function Home() {
   const [view, setView] = useState<ViewKey>("overview");
   const [live, setLive] = useState<LivePayload>(fallbackData);
   const [loading, setLoading] = useState(true);
-  const [horizon, setHorizon] = useState(30);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
@@ -286,6 +309,7 @@ export default function Home() {
   const [lastClientRefresh, setLastClientRefresh] = useState<Date | null>(null);
   const [tripAnalytics, setTripAnalytics] = useState<TripAnalytics | null>(null);
   const [snapshotAnalytics, setSnapshotAnalytics] = useState<SnapshotAnalytics | null>(null);
+  const [stationHistory, setStationHistory] = useState<StationSnapshot[]>([]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -304,29 +328,36 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    const initial = window.setTimeout(() => void refresh(), 0);
     const timer = window.setInterval(() => void refresh(), 300_000);
-    return () => window.clearInterval(timer);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
   }, [refresh]);
 
   useEffect(() => {
     fetch("/data/trip-analytics.json").then((response) => response.json()).then((payload: TripAnalytics) => setTripAnalytics(payload)).catch(() => setTripAnalytics(null));
   }, []);
 
-  const stations = useMemo(() => live.stations.map((station) => deriveStation(station, horizon)), [live.stations, horizon]);
-  const riskStations = useMemo(() => stations.filter((station) => station.riskType !== "balanced").sort((a, b) => b.risk - a.risk), [stations]);
+  const stations = useMemo(() => live.stations.map((station) => deriveStation(station)), [live.stations]);
+  const riskStations = useMemo(() => stations.filter((station) => station.actionable && station.riskType !== "balanced").sort((a, b) => b.risk - a.risk), [stations]);
   const shortageStations = useMemo(() => stations.filter((station) => station.riskType === "shortage").sort((a, b) => b.risk - a.risk), [stations]);
   const overflowStations = useMemo(() => stations.filter((station) => station.riskType === "overflow").sort((a, b) => b.risk - a.risk), [stations]);
   const selected = stations.find((station) => station.id === selectedId) ?? riskStations[0] ?? stations[0];
 
   useEffect(() => {
-    if (!selectedId && riskStations[0]) setSelectedId(riskStations[0].id);
-  }, [riskStations, selectedId]);
+    if (!selected?.id) return;
+    let active = true;
+    fetch(`/api/analytics?stationId=${encodeURIComponent(selected.id)}&t=${Date.now()}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: SnapshotAnalytics) => { if (active) setStationHistory(payload.station ?? []); })
+      .catch(() => { if (active) setStationHistory([]); });
+    return () => { active = false; };
+  }, [selected?.id, live.updatedAt]);
+  const visibleStationHistory = stationHistory[0]?.station_id === selected?.id ? stationHistory : [];
 
   const totals = useMemo(() => stations.reduce((acc, station) => ({
-    bikes: acc.bikes + station.bikes,
-    docks: acc.docks + station.docks,
-    ebikes: acc.ebikes + station.ebikes,
+    bikes: acc.bikes + (station.actionable ? station.bikes : 0),
+    docks: acc.docks + (station.actionable ? station.docks : 0),
+    ebikes: acc.ebikes + (station.actionable ? station.ebikes : 0),
     disabled: acc.disabled + station.disabled,
     online: acc.online + Number(station.online),
   }), { bikes: 0, docks: 0, ebikes: 0, disabled: 0, online: 0 }), [stations]);
@@ -341,7 +372,8 @@ export default function Home() {
         return straightLineKm(candidate, target) < straightLineKm(nearest, target) ? candidate : nearest;
       }, undefined);
       if (!source) continue;
-      const amount = Math.max(3, Math.min(12, Math.round(target.capacity * .28) - target.bikes, remainingSpare.get(source.id) ?? 0));
+      const amount = Math.min(12, Math.max(0, Math.round(target.capacity * .28) - target.bikes), remainingSpare.get(source.id) ?? 0);
+      if (amount < 1) continue;
       remainingSpare.set(source.id, (remainingSpare.get(source.id) ?? 0) - amount);
       const rank = result.length + 1;
       result.push({
@@ -355,10 +387,6 @@ export default function Home() {
     return result;
   }, [shortageStations, overflowStations]);
 
-  useEffect(() => {
-    if (!selectedTaskId && tasks[0]) setSelectedTaskId(tasks[0].id);
-  }, [selectedTaskId, tasks]);
-
   const navigate = (target: ViewKey) => { setView(target); setMobileNav(false); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const updatedLabel = live.updatedAt ? new Date(live.updatedAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "--:--";
   const temperature = Number(live.weather?.temperature_2m ?? 25.4).toFixed(1);
@@ -370,7 +398,7 @@ export default function Home() {
 
   return <main className="app-shell">
     <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
-      <div className="brand"><span><Bike size={22} /></span><div><strong>BikeFlow AI</strong><small>供需预测 · 调度中台</small></div><button className="nav-close" onClick={() => setMobileNav(false)} aria-label="关闭导航"><X size={17} /></button></div>
+      <div className="brand"><span><Bike size={22} /></span><div><strong>BikeFlow AI</strong><small>实时分析 · 调度中台</small></div><button className="nav-close" onClick={() => setMobileNav(false)} aria-label="关闭导航"><X size={17} /></button></div>
       <div className="nav-caption">运营工作台</div>
       <nav>{nav.map((item) => <button data-testid={`nav-${item.id}`} key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}><item.icon size={18} /><span><b>{item.label}</b><small>{item.note}</small></span><ChevronRight size={13} className="nav-arrow" /></button>)}</nav>
       <div className="pipeline-card"><div><span className={`live-dot ${live.source === "fallback" ? "demo" : ""}`} /><b>{live.source === "live" ? "GBFS 实时链路正常" : "实时源回退中"}</b></div><strong>{number.format(stations.length)}</strong><small>当前站点 · {updatedLabel}</small><div className="pipeline"><i className={live.source === "live" ? "done" : "active"} /><i className={live.snapshot?.persisted ? "done" : "active"} /><i className={tripAnalytics ? "done" : "active"} /><i /></div><p>实时源 → D1快照 → 月度聚合 → 模型未上线</p></div>
@@ -386,7 +414,7 @@ export default function Home() {
 
       <div className="dashboard-stage">
         {view === "overview" && <OverviewView stations={stations} totals={totals} riskStations={riskStations} tasks={tasks} selectedId={selected?.id ?? null} onSelect={selectStation} onOpenTask={openTask} temperature={temperature} wind={wind} navigate={navigate} analytics={live.analytics} snapshot={live.snapshot} />}
-        {view === "forecast" && <ForecastView stations={stations} riskStations={riskStations} selected={selected} setSelectedId={setSelectedId} horizon={horizon} setHorizon={setHorizon} query={query} setQuery={setQuery} />}
+        {view === "forecast" && <ForecastView stations={stations} riskStations={riskStations} selected={selected} setSelectedId={setSelectedId} stationHistory={visibleStationHistory} query={query} setQuery={setQuery} />}
         {view === "dispatch" && <DispatchView tasks={tasks} stations={stations} shortageStations={shortageStations} overflowStations={overflowStations} selectedTaskId={selectedTaskId} setSelectedTaskId={setSelectedTaskId} />}
         {view === "history" && <HistoryView data={tripAnalytics} liveAnalytics={live.analytics} />}
         {view === "model" && <ModelView updatedLabel={updatedLabel} stationCount={stations.length} source={live.source} lastClientRefresh={lastClientRefresh} snapshot={live.snapshot} analytics={snapshotAnalytics} tripData={tripAnalytics} />}
@@ -409,9 +437,11 @@ function OverviewView({ stations, totals, riskStations, tasks, selectedId, onSel
   analytics?: LiveAnalytics;
   snapshot?: LivePayload["snapshot"];
 }) {
-  const serviceRate = stations.length ? totals.online / stations.length : 0;
+  const operationalCount = analytics?.totals.operationalStations ?? stations.filter((station) => station.actionable).length;
+  const serviceRate = stations.length ? operationalCount / stations.length : 0;
   const electricRate = totals.bikes ? totals.ebikes / totals.bikes : 0;
   const selected = stations.find((station) => station.id === selectedId);
+  const issueCount = stations.filter((station) => !station.actionable).length;
   return <section className="overview-view">
     <div className="command-strip">
       <div className="command-copy"><span><Sparkles size={13} /> 当前运营判断</span><h2>{riskStations.length ? `${riskStations.length} 个站点触发库存阈值，建议人工复核` : "当前网络供需平稳"}</h2><p>站点库存、服务状态与天气为实时数据；风险来自容量阈值规则，不是模型预测。页面在线时每5分钟写入一轮持久化快照。</p></div>
@@ -420,11 +450,11 @@ function OverviewView({ stations, totals, riskStations, tasks, selectedId, onSel
     </div>
 
     <div className="kpi-grid kpi-grid-six">
-      <Kpi icon={Layers3} label="在线站点" value={number.format(totals.online)} note={`服务可用率 ${pct(serviceRate)}`} tone="violet" />
+      <Kpi icon={Layers3} label="可运营站点" value={number.format(analytics?.totals.operationalStations ?? totals.online)} note={`服务可用率 ${pct(serviceRate)}`} tone="violet" />
       <Kpi icon={Bike} label="可用车辆" value={number.format(totals.bikes)} note="全网当前库存" tone="blue" />
       <Kpi icon={CircleDot} label="可用车位" value={number.format(totals.docks)} note="预计还车容量" tone="teal" />
       <Kpi icon={Zap} label="电助力车" value={pct(electricRate)} note={`${number.format(totals.ebikes)} 辆可用`} tone="amber" />
-      <Kpi icon={AlertTriangle} label="故障车辆" value={number.format(totals.disabled)} note="待检修库存" tone="coral" />
+      <Kpi icon={AlertTriangle} label="服务异常站点" value={number.format(issueCount)} note="含停运、陈旧与容量异常" tone="coral" />
       <Kpi icon={CloudSun} label="纽约天气" value={`${temperature}°C`} note={`风速 ${wind} km/h`} tone="sky" />
     </div>
 
@@ -432,8 +462,8 @@ function OverviewView({ stations, totals, riskStations, tasks, selectedId, onSel
       <article className="card map-card">
         <CardHead eyebrow="实时库存地图" title="当前站点库存风险" note="点击右侧站点后，地图会定位并用黑色圆环突出" />
         <div className="map-wrap"><BikeMap stations={stations} selectedId={selectedId} onSelect={onSelect} />
-          <div className="map-legend"><span><i className="shortage" />缺车</span><span><i className="overflow" />满桩</span><span><i className="balanced" />平衡</span></div>
-          {selected && <div className="station-pop" data-testid="selected-station-detail"><span><MapPin size={11} /> 地图已定位 · {selected.riskType === "shortage" ? "缺车风险" : selected.riskType === "overflow" ? "满桩风险" : "供需平衡"}</span><b>{selected.name}</b><small className="station-id">站点 {selected.id}</small><div className="station-pop-metrics"><p><strong>{selected.bikes}</strong><small>可用车</small></p><p><strong>{selected.docks}</strong><small>空车位</small></p><p><strong>{selected.capacity}</strong><small>容量</small></p><p><strong>{selected.ebikes}</strong><small>电助力车</small></p><p><strong>{selected.disabled}</strong><small>故障车</small></p><p><strong>{selected.risk}</strong><small>风险分</small></p></div><footer><span>库存率 {pct(selected.ratio)}</span><span>{selected.online ? "可借可还" : "服务暂停"}</span><span>{new Date(selected.lastReported * 1000).toLocaleTimeString("zh-CN", { hour12: false })} 上报</span></footer></div>}
+          <div className="map-legend"><span><i className="shortage" />缺车</span><span><i className="overflow" />满桩</span><span><i className="balanced" />平衡</span><span><i className="unavailable" />服务异常</span></div>
+          {selected && <div className={`station-pop ${selected.actionable ? "" : "station-unavailable"}`} data-testid="selected-station-detail"><span><MapPin size={11} /> 地图已定位 · {selected.actionable ? selected.riskType === "shortage" ? "缺车风险" : selected.riskType === "overflow" ? "满桩风险" : "供需平衡" : serviceStateLabel(selected)}</span><b>{selected.name}</b><small className="station-id">站点 {selected.id}</small><div className="station-pop-metrics"><p><strong>{selected.bikes}</strong><small>可用车</small></p><p><strong>{selected.docks}</strong><small>空车位</small></p><p><strong>{selected.capacity || "—"}</strong><small>容量</small></p><p><strong>{selected.ebikes}</strong><small>电助力车</small></p><p><strong>{selected.disabled}</strong><small>故障车</small></p><p><strong>{selected.actionable ? selected.risk : "—"}</strong><small>风险分</small></p></div><footer><span>库存率 {selected.actionable ? pct(selected.ratio) : "不可计算"}</span><span>{serviceStateLabel(selected)}</span><span>{selected.lastReported > 100000 ? `${new Date(selected.lastReported * 1000).toLocaleTimeString("zh-CN", { hour12: false })} 上报` : "无有效上报"}</span></footer></div>}
         </div>
       </article>
 
@@ -446,57 +476,51 @@ function OverviewView({ stations, totals, riskStations, tasks, selectedId, onSel
 
     <div className="overview-bottom-grid">
       <article className="card task-preview"><CardHead eyebrow="待复核调度" title="点击查看配对详情" note="按当前库存与直线距离生成" /><div className="task-preview-list">{tasks.slice(0, 3).map((task) => <button data-testid={`overview-task-${task.id}`} key={task.id} onClick={() => onOpenTask(task.id)}><span className={`priority ${task.priority === "紧急" ? "urgent" : ""}`}>{task.priority}</span><div><b>{task.source}</b><small>调往 {task.target}</small></div><strong>{task.amount} 辆</strong><em>{task.distanceKm}km</em><ChevronRight size={13} /></button>)}</div></article>
-      <article className="card live-region-card"><CardHead eyebrow="区域供给热度" title="实时车辆分布" note="按当前可用车辆排序" /><div>{(analytics?.regions ?? []).slice(0, 4).map((region) => <p key={region.name}><span><b>{region.name}</b><small>{region.stations} 个站点 · 空站 {region.emptyStations}</small></span><i><u style={{ width: `${Math.max(8, region.bikeShare * 100)}%` }} /></i><strong>{number.format(region.bikes)}</strong></p>)}</div></article>
+      <article className="card live-region-card"><CardHead eyebrow="区域供给热度" title="实时车辆分布" note="坐标规则近似分区 · 按可用车排序" /><div>{(analytics?.regions ?? []).slice(0, 4).map((region) => <p key={region.name}><span><b>{region.name}</b><small>{region.stations} 个站点 · 空站 {region.emptyStations}</small></span><i><u style={{ width: `${Math.max(8, region.bikeShare * 100)}%` }} /></i><strong>{number.format(region.bikes)}</strong></p>)}</div></article>
       <article className="card freshness-card"><span>MEASURED FRESHNESS</span><div><TimerReset size={18} /><strong>{analytics ? `${analytics.freshness.sourceAgeSeconds}s` : "—"}</strong></div><p>实际源延迟 · 陈旧站点 {analytics?.freshness.staleStations ?? "—"} 个</p><div className={`snapshot-state ${snapshot?.persisted ? "ok" : "warn"}`}><i />{snapshot?.persisted ? "5分钟快照已写入 D1" : "快照存储未生效"}</div></article>
     </div>
   </section>;
 }
 
-function ForecastView({ stations, riskStations, selected, setSelectedId, horizon, setHorizon, query, setQuery }: {
+function ForecastView({ stations, riskStations, selected, setSelectedId, stationHistory, query, setQuery }: {
   stations: DerivedStation[];
   riskStations: DerivedStation[];
   selected?: DerivedStation;
   setSelectedId: (id: string) => void;
-  horizon: number;
-  setHorizon: (value: number) => void;
+  stationHistory: StationSnapshot[];
   query: string;
   setQuery: (value: string) => void;
 }) {
   const filtered = riskStations.filter((station) => station.name.toLowerCase().includes(query.toLowerCase())).slice(0, 12);
-  const cap = selected?.capacity ?? 40;
-  const now = selected?.bikes ?? 16;
-  const points = [-60, -45, -30, -15, 0, 15, 30, 45, 60];
-  const actual = points.map((minute) => minute === 0 ? now : null);
-  const forecast = points.map((minute) => minute < 0 ? null : now);
-  const lower = forecast.map((value, index) => value === null ? null : clamp(value - Math.round(1 + index * 0.55), 0, cap));
-  const upper = forecast.map((value, index) => value === null ? null : clamp(value + Math.round(1 + index * 0.55), 0, cap));
-  const option = {
-    grid: { left: 42, right: 20, top: 34, bottom: 35 },
+  const historyRows = stationHistory.slice(-13);
+  const hasHistory = historyRows.length >= 2;
+  const warningLine = selected?.actionable ? Math.max(3, Math.round(selected.capacity * .12)) : 0;
+  const historyOption = {
+    grid: { left: 48, right: 24, top: 44, bottom: 42 },
     tooltip: { trigger: "axis", backgroundColor: "rgba(25,31,60,.94)", borderWidth: 0, textStyle: { color: "#fff", fontSize: 11 } },
-    legend: { top: 2, right: 16, itemWidth: 10, textStyle: { color: "#758097", fontSize: 10 } },
-    xAxis: { type: "category", data: points.map((v) => v === 0 ? "当前" : `${v > 0 ? "+" : ""}${v}m`), axisLine: { lineStyle: { color: "#e5e8f1" } }, axisTick: { show: false }, axisLabel: { color: "#8f99ad", fontSize: 10 } },
-    yAxis: { type: "value", max: cap, splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#8f99ad", fontSize: 10 } },
+    legend: { top: 4, right: 18, itemWidth: 12, textStyle: { color: "#758097", fontSize: 10 } },
+    xAxis: { type: "category", data: historyRows.map((row) => new Date(row.snapshot_at * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })), axisLine: { lineStyle: { color: "#e5e8f1" } }, axisTick: { show: false }, axisLabel: { color: "#8f99ad", fontSize: 10 } },
+    yAxis: { type: "value", max: selected?.capacity || undefined, name: "辆 / 车位", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#8f99ad", fontSize: 10 } },
     series: [
-      { name: "当前实测", type: "scatter", data: actual, symbolSize: 10, itemStyle: { color: "#4d78f0" } },
-      { name: "库存不变对照线", type: "line", data: forecast, smooth: 0.2, symbolSize: 5, lineStyle: { width: 3, type: "dashed", color: "#675cf0" }, itemStyle: { color: "#675cf0" } },
-      { name: "上界", type: "line", data: upper, symbol: "none", lineStyle: { width: 1, color: "rgba(103,92,240,.26)" }, areaStyle: { color: "rgba(103,92,240,.08)" } },
-      { name: "下界", type: "line", data: lower, symbol: "none", lineStyle: { width: 1, color: "rgba(103,92,240,.26)" } },
+      { name: "可用车辆", type: "line", data: historyRows.map((row) => row.bikes), smooth: .22, symbolSize: 6, lineStyle: { width: 3, color: "#5c51e3" }, itemStyle: { color: "#5c51e3" }, markLine: { silent: true, symbol: "none", data: [{ yAxis: warningLine, name: "缺车阈值" }], lineStyle: { color: "#e76f5d", type: "dashed" }, label: { formatter: "缺车阈值", color: "#b85a4c", fontSize: 9 } } },
+      { name: "可用车位", type: "line", data: historyRows.map((row) => row.docks), smooth: .22, symbolSize: 6, lineStyle: { width: 2, color: "#159783" }, itemStyle: { color: "#159783" } },
     ],
   };
+  const operationalStations = stations.filter((station) => station.actionable);
   const distribution = {
-    grid: { left: 36, right: 14, top: 25, bottom: 28 },
-    xAxis: { type: "category", data: ["0–20", "20–40", "40–60", "60–80", "80–100"], axisLabel: { color: "#8d97aa", fontSize: 9 }, axisLine: { show: false }, axisTick: { show: false } },
-    yAxis: { type: "value", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#9ba4b6", fontSize: 9 } },
-    series: [{ type: "bar", data: [stations.filter(s => s.risk < 20).length, stations.filter(s => s.risk >= 20 && s.risk < 40).length, stations.filter(s => s.risk >= 40 && s.risk < 60).length, stations.filter(s => s.risk >= 60 && s.risk < 80).length, stations.filter(s => s.risk >= 80).length], barWidth: "56%", itemStyle: { color: "#675cf0", borderRadius: [7, 7, 0, 0] } }],
+    grid: { left: 42, right: 18, top: 28, bottom: 34 },
+    xAxis: { type: "category", data: ["0–20", "20–40", "40–60", "60–80", "80–100"], axisLabel: { color: "#8d97aa", fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false } },
+    yAxis: { type: "value", name: "站点数", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#9ba4b6", fontSize: 10 } },
+    series: [{ type: "bar", data: [operationalStations.filter(s => s.risk < 20).length, operationalStations.filter(s => s.risk >= 20 && s.risk < 40).length, operationalStations.filter(s => s.risk >= 40 && s.risk < 60).length, operationalStations.filter(s => s.risk >= 60 && s.risk < 80).length, operationalStations.filter(s => s.risk >= 80).length], barWidth: "56%", itemStyle: { color: "#675cf0", borderRadius: [7, 7, 0, 0] } }],
   };
   return <section className="forecast-view">
-    <div className="section-toolbar"><div><span>对照时间</span><Segmented value={horizon} values={[15, 30, 60]} onChange={setHorizon} suffix="分钟" /></div><div className="baseline-badge"><CircleDot size={13} /> 当前没有预测模型：这里只假设库存不变</div></div>
-    <div className="forecast-kpis kpi-grid"><Kpi icon={Bike} label="当前可用车辆" value={String(selected?.bikes ?? "—")} note={`站点容量 ${selected?.capacity ?? "—"}`} tone="blue" /><Kpi icon={TrendingUp} label={`${horizon}分钟对照值`} value={String(selected?.projectedBikes ?? "—")} note="简单假设库存不发生变化" tone="violet" /><Kpi icon={AlertTriangle} label="当前库存风险分" value={`${selected?.risk ?? "—"}`} note={selected?.riskType === "shortage" ? "当前低库存" : selected?.riskType === "overflow" ? "当前低空位" : "供需平衡"} tone="coral" /><Kpi icon={Gauge} label="告警库存线" value={String(Math.max(3, Math.round((selected?.capacity ?? 40) * .12)))} note="低于容量 12% 触发" tone="teal" /></div>
+    <div className="section-toolbar diagnostic-toolbar"><div><Check size={15} /><span>只展示真实快照；没有模型时不再绘制未来曲线</span></div><div className="baseline-badge"><Database size={13} /> 当前站点已积累 {historyRows.length} 个快照</div></div>
+    <div className="forecast-kpis kpi-grid"><Kpi icon={Bike} label="当前可用车辆" value={String(selected?.bikes ?? "—")} note={`站点容量 ${selected?.capacity || "不可用"}`} tone="blue" /><Kpi icon={CircleDot} label="当前可用车位" value={String(selected?.docks ?? "—")} note={selected?.actionable ? "来自最新 GBFS 状态" : serviceStateLabel(selected)} tone="teal" /><Kpi icon={AlertTriangle} label="当前库存风险分" value={selected?.actionable ? String(selected.risk) : "不计算"} note={selected?.riskType === "shortage" ? "当前低库存" : selected?.riskType === "overflow" ? "当前低空位" : serviceStateLabel(selected)} tone="coral" /><Kpi icon={Gauge} label="告警库存线" value={selected?.actionable ? String(warningLine) : "—"} note="低于容量 12% 触发" tone="violet" /></div>
     <div className="forecast-grid">
-      <article className="card forecast-chart"><CardHead eyebrow="库存诊断" title={selected?.name ?? "请选择站点"} note="虚线是库存不变的对照，不是未来预测" /><ReactECharts option={option} style={{ height: 355 }} /></article>
-      <article className="card station-browser"><div className="station-browser-head"><CardHead eyebrow="站点排行" title="风险站点" note={`${riskStations.length} 个需要关注`} /><label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索站点" /></label></div><div className="station-table"><div className="station-row head"><span>站点</span><span>当前</span><span>预测</span><span>风险</span></div>{filtered.map((station) => <button key={station.id} className={selected?.id === station.id ? "selected" : ""} onClick={() => setSelectedId(station.id)}><span><b>{station.name}</b><small>{station.riskType === "shortage" ? "缺车" : "满桩"}</small></span><strong>{station.bikes}</strong><strong>{station.projectedBikes}</strong><em>{station.risk}</em></button>)}</div></article>
-      <article className="card risk-distribution"><CardHead eyebrow="全网分布" title="风险评分分布" note="评分越高，越应优先人工复核" /><ReactECharts option={distribution} style={{ height: 245 }} /></article>
-      <article className="card explain-card"><div className="explain-title"><span><Sparkles size={16} /></span><div><small>MEASURED FACTORS</small><h3>为什么触发告警</h3></div></div><div className="reason-list"><div><i style={{ width: `${Math.max(5, 100 - ((selected?.bikes ?? 0) / Math.max(1, selected?.capacity ?? 1)) * 100)}%` }} /><span>当前可用车辆</span><b>{selected?.bikes ?? "—"}</b></div><div><i style={{ width: `${Math.max(5, 100 - ((selected?.docks ?? 0) / Math.max(1, selected?.capacity ?? 1)) * 100)}%` }} /><span>当前可用车位</span><b>{selected?.docks ?? "—"}</b></div><div><i style={{ width: `${Math.max(8, ((selected?.bikes ?? 0) / Math.max(1, selected?.capacity ?? 1)) * 100)}%` }} /><span>车辆填充率</span><b>{selected ? pct(selected.ratio) : "—"}</b></div><div><i style={{ width: `${Math.min(100, horizon)}%` }} /><span>当前查看的对照时间</span><b>{horizon}m</b></div></div><p>告警只使用当前 GBFS 库存与容量阈值。对照线只是“未来仍等于当前库存”，目的是以后检验训练模型是否真的更准。</p></article>
+      <article className="card forecast-chart"><CardHead eyebrow="真实库存轨迹" title={selected?.name ?? "请选择站点"} note="最近快照中的可用车辆与空车位" />{hasHistory ? <ReactECharts option={historyOption} style={{ height: 355 }} /> : <div className="diagnostic-empty"><Database size={28} /><b>该站点尚无足够历史快照</b><p>当前值已经显示；至少积累两个5分钟快照后才绘制趋势，不再用重复直线冒充分析。</p></div>}</article>
+      <article className="card station-browser"><div className="station-browser-head"><CardHead eyebrow="站点排行" title="可运营风险站点" note={`${riskStations.length} 个需要关注`} /><label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索站点" /></label></div><div className="station-table"><div className="station-row head"><span>站点</span><span>车辆</span><span>车位</span><span>风险</span></div>{filtered.map((station) => <button key={station.id} className={selected?.id === station.id ? "selected" : ""} onClick={() => setSelectedId(station.id)}><span><b>{station.name}</b><small>{station.riskType === "shortage" ? "缺车" : "满桩"} · {serviceStateLabel(station)}</small></span><strong>{station.bikes}</strong><strong>{station.docks}</strong><em>{station.risk}</em></button>)}</div></article>
+      <article className="card risk-distribution"><CardHead eyebrow="全网分布" title="可运营站点风险评分" note="停运、陈旧和容量异常站点已排除" /><ReactECharts option={distribution} style={{ height: 245 }} /></article>
+      <article className="card explain-card"><div className="explain-title"><span><Sparkles size={16} /></span><div><small>MEASURED FACTORS</small><h3>当前告警依据</h3></div></div><div className="reason-list"><div><i style={{ width: `${Math.max(5, 100 - ((selected?.bikes ?? 0) / Math.max(1, selected?.capacity ?? 1)) * 100)}%` }} /><span>缺车压力</span><b>{selected?.bikes ?? "—"}</b></div><div><i style={{ width: `${Math.max(5, 100 - ((selected?.docks ?? 0) / Math.max(1, selected?.capacity ?? 1)) * 100)}%` }} /><span>满桩压力</span><b>{selected?.docks ?? "—"}</b></div><div><i style={{ width: `${Math.max(8, ((selected?.bikes ?? 0) / Math.max(1, selected?.capacity ?? 1)) * 100)}%` }} /><span>车辆填充率</span><b>{selected?.actionable ? pct(selected.ratio) : "—"}</b></div><div><i style={{ width: selected?.actionable ? "100%" : "8%" }} /><span>服务状态</span><b>{selected?.actionable ? "正常" : "异常"}</b></div></div><p>风险只使用最新库存、空车位与容量阈值，属于可解释规则告警。未来预测和置信区间必须等模型完成训练、回测并持续优于基线后才会显示。</p></article>
     </div>
   </section>;
 }
@@ -512,6 +536,7 @@ function DispatchMap({ task, source, target }: { task?: RebalanceTask; source?: 
       { type: "Feature" as const, properties: { kind: "target" }, geometry: { type: "Point" as const, coordinates: [target.lon, target.lat] } },
     ] : [],
   }), [source, target]);
+  const initialRouteGeojsonRef = useRef(routeGeojson);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -522,7 +547,7 @@ function DispatchMap({ task, source, target }: { task?: RebalanceTask; source?: 
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.on("load", () => {
-      map.addSource("dispatch-route", { type: "geojson", data: routeGeojson });
+      map.addSource("dispatch-route", { type: "geojson", data: initialRouteGeojsonRef.current });
       map.addLayer({ id: "dispatch-line", type: "line", source: "dispatch-route", filter: ["==", ["get", "kind"], "route"], paint: { "line-color": "#6257e8", "line-width": 4, "line-dasharray": [1.2, 1.2] } });
       map.addLayer({ id: "dispatch-points", type: "circle", source: "dispatch-route", filter: ["!=", ["get", "kind"], "route"], paint: { "circle-radius": 10, "circle-color": ["match", ["get", "kind"], "source", "#526bc1", "#ef6a5b"], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
     });
@@ -587,6 +612,12 @@ function HistoryView({ data, liveAnalytics }: { data: TripAnalytics | null; live
     yAxis: { type: "value", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#929bad", fontSize: 9, formatter: (value: number) => `${Math.round(value / 1000)}k` } },
     series: [{ name: "会员", type: "line", data: data.hourly.map((row) => row.member), smooth: .35, showSymbol: false, lineStyle: { width: 3, color: "#6257e8" }, areaStyle: { color: "rgba(98,87,232,.11)" } }, { name: "临时用户", type: "line", data: data.hourly.map((row) => row.casual), smooth: .35, showSymbol: false, lineStyle: { width: 2, color: "#19a895" } }],
   };
+  const weekdayOption = {
+    grid: { left: 54, right: 18, top: 42, bottom: 38 }, tooltip: { trigger: "axis" }, legend: { top: 4, right: 12, textStyle: { fontSize: 10, color: "#7d879a" } },
+    xAxis: { type: "category", data: data.weekday.map((row) => row.label), axisLabel: { color: "#8d97aa", fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false } },
+    yAxis: { type: "value", name: "骑行量", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#929bad", fontSize: 9, formatter: (value: number) => `${Math.round(value / 1000)}k` } },
+    series: [{ name: "会员", type: "bar", stack: "rides", data: data.weekday.map((row) => row.member), itemStyle: { color: "#6257e8" } }, { name: "临时用户", type: "bar", stack: "rides", data: data.weekday.map((row) => row.casual), itemStyle: { color: "#22a893", borderRadius: [5, 5, 0, 0] } }],
+  };
   const regionOption = {
     grid: { left: 88, right: 28, top: 20, bottom: 25 }, tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
     xAxis: { type: "value", splitLine: { lineStyle: { color: "#eef0f5" } }, axisLabel: { color: "#929bad", fontSize: 9, formatter: (value: number) => `${Math.round(value / 1000)}k` } },
@@ -616,7 +647,8 @@ function HistoryView({ data, liveAnalytics }: { data: TripAnalytics | null; live
     <div className="history-kpis kpi-grid"><Kpi icon={Activity} label="有效骑行" value={number.format(data.meta.validRides)} note={`${data.meta.activeDays} 天完整月份`} tone="violet" /><Kpi icon={MapPin} label="活跃站点" value={number.format(data.meta.stations)} note="至少产生一次有效出发" tone="blue" /><Kpi icon={Gauge} label="会员骑行占比" value={pct(member?.share ?? 0)} note={`峰值 ${member?.peakHour ?? "—"}:00`} tone="teal" /><Kpi icon={Zap} label="电助力车占比" value={pct(electric?.share ?? 0)} note={`${number.format(electric?.rides ?? 0)} 次骑行`} tone="amber" /></div>
     <div className="business-grid">
       <article className="card history-hourly"><CardHead eyebrow="用户活跃时段" title="会员与临时用户小时需求" note="按骑行开始时间统计" /><ReactECharts option={hourlyOption} style={{ height: 340 }} /></article>
-      <article className="card region-demand"><CardHead eyebrow="区域热度" title="区域骑行出发量" note="按起点坐标划分运营区域" /><ReactECharts option={regionOption} style={{ height: 340 }} /></article>
+      <article className="card region-demand"><CardHead eyebrow="区域热度" title="区域骑行出发量" note="按起点坐标规则近似分区，非行政边界" /><ReactECharts option={regionOption} style={{ height: 340 }} /></article>
+      <article className="card weekday-analysis"><CardHead eyebrow="工作日 × 周末" title="一周需求与用户结构" note="同时观察总量和临时用户占比" /><ReactECharts option={weekdayOption} style={{ height: 300 }} /></article>
       <article className="card segment-analysis"><CardHead eyebrow="用户结构" title="会员 vs 临时用户" note="无个人ID，仅做群体级分析" /><div className="segment-compare"><div><span>会员</span><strong>{number.format(member?.rides ?? 0)}</strong><p><b>{member?.avgDuration ?? "—"} min</b>平均时长</p><p><b>{pct(member?.weekendShare ?? 0)}</b>周末占比</p><p><b>{pct(member?.electricShare ?? 0)}</b>电助力偏好</p></div><div><span>临时用户</span><strong>{number.format(casual?.rides ?? 0)}</strong><p><b>{casual?.avgDuration ?? "—"} min</b>平均时长</p><p><b>{pct(casual?.weekendShare ?? 0)}</b>周末占比</p><p><b>{pct(casual?.electricShare ?? 0)}</b>电助力偏好</p></div></div></article>
       <article className="card duration-analysis"><CardHead eyebrow="交互偏好代理" title="骑行时长分布" note="以用车行为代替不存在的点击数据" /><ReactECharts option={durationOption} style={{ height: 290 }} /></article>
       <article className="card distance-analysis"><CardHead eyebrow="距离 × 用户 × 时长" title="直线距离与骑行行为" note="基于起终点坐标，非道路里程" /><ReactECharts option={distanceOption} style={{ height: 330 }} /><p className="method-note">样本 {number.format(data.distanceModel.samples)} 次；距离与时长的对数模型 R² {data.distanceModel.r2.toFixed(3)}。直线距离每增加 1%，时长平均关联增加 {data.distanceModel.distanceElasticity.toFixed(2)}%，用于描述而非路线规划。</p></article>
@@ -624,7 +656,8 @@ function HistoryView({ data, liveAnalytics }: { data: TripAnalytics | null; live
       {data.weather && <article className="card factor-model"><CardHead eyebrow="天气关系分析" title="原始相关与控制后关联" note="正数同向 · 负数反向 · 不等于因果" /><div className="relationship-head"><span>天气因素</span><span>原始相关系数</span><span>控制时段后租车量变化</span></div><div className="relationship-list">{data.weather.controlledEffects.map((row) => { const correlation = data.weather?.correlations.find((item) => item.factor === row.factor)?.correlation ?? 0; return <div key={row.factor}><b>{row.factor}</b><span className={correlation < 0 ? "negative" : "positive"}>{correlation > 0 ? "+" : ""}{correlation.toFixed(3)}</span><strong className={row.effectPct < 0 ? "negative" : "positive"}>{row.effectPct > 0 ? "+" : ""}{row.effectPct.toFixed(2)}%</strong><small>{row.factor.includes("降雨") ? "雨越大，需求越低；三项中关系最强" : row.factor.includes("气温") ? "较暖小时通常有更多骑行" : "控制时段后关系较弱"}</small></div>; })}</div><div className="model-facts"><p><span>有效天气小时</span><b>{data.weather.matchedHours}</b></p><p><span>模型解释度 R²</span><b>{data.weather.controlledModelR2.toFixed(3)}</b></p><p><span>控制变量</span><b>小时 + 星期</b></p></div><p className="method-note">读法示例：降雨 +1mm 与租车量变化 {rainEffect.toFixed(2)}% 相关。模型使用小时骑行量并控制小时、星期；活动、节假日等遗漏变量仍可能影响结果，因此不能当作天气的因果效应。</p></article>}
       <article className="card live-availability"><CardHead eyebrow="实时供给结构" title="当前站点可用性" note="来自最新 GBFS 快照" /><div>{(liveAnalytics?.availability ?? []).map((row) => <p key={row.label}><span>{row.label}</span><i><u style={{ width: `${Math.max(4, row.count / Math.max(1, liveAnalytics?.availability.reduce((sum, item) => sum + item.count, 0) ?? 1) * 100)}%` }} /></i><b>{number.format(row.count)}</b></p>)}</div></article>
       <article className="card route-ranking"><CardHead eyebrow="OD 流向" title="热门起终点组合" note="排除起终点相同的骑行" /><div className="route-ranking-list">{data.topRoutes.slice(0, 8).map((route, index) => <div key={`${route.start}-${route.end}`}><em>{index + 1}</em><span><b>{route.start}</b><small>→ {route.end}</small></span><strong>{number.format(route.rides)}</strong></div>)}</div></article>
-      <article className="card analysis-conclusions"><CardHead eyebrow="本月可执行发现" title="从图表到运营动作" note="仅适用于 2026 年 4 月样本" /><div><p><span>距离结构</span><b>{dominantDistance.label} 骑行量最高</b><small>短途站点应优先保证高周转库存</small></p><p><span>天气关系</span><b>降雨是三项中最强负向因素</b><small>雨天应降低补车目标并关注还车容量</small></p><p><span>用户差异</span><b>临时用户时长关联 +{data.distanceModel.casualDurationEffectPct.toFixed(1)}%</b><small>控制距离与车型后仍明显更长</small></p><p><span>车型差异</span><b>电助力车时长关联 {data.distanceModel.electricDurationEffectPct.toFixed(1)}%</b><small>同距离下周转更快，应单独监控供给</small></p></div></article>
+      <article className="card region-profile"><CardHead eyebrow="区域多维画像" title="热度、流入流出与偏好" note="坐标规则近似分区 · 同表对比8个区域" /><div className="region-profile-table"><div className="region-profile-row head"><span>区域</span><span>出发</span><span>净流入</span><span>会员</span><span>电助力</span><span>时长</span><span>距离</span><span>峰值</span></div>{data.regions.slice(0, 8).map((region) => <div className="region-profile-row" key={region.name}><b>{region.name}</b><span>{number.format(region.starts)}</span><strong className={region.netFlow < 0 ? "negative" : "positive"}>{region.netFlow > 0 ? "+" : ""}{number.format(region.netFlow)}</strong><span>{pct(region.memberShare)}</span><span>{pct(region.electricShare)}</span><span>{region.avgDuration}m</span><span>{region.avgDistance}km</span><span>{region.peakHour}:00</span></div>)}</div></article>
+      <article className="card analysis-conclusions"><CardHead eyebrow="本月可执行发现" title="从图表到运营动作" note="仅适用于 2026 年 4 月样本" /><div><p><span>距离结构</span><b>{dominantDistance.label} 骑行量最高</b><small>短途站点应优先保证高周转库存</small></p><p><span>天气关系</span><b>降雨是三项中最强负向因素</b><small>可试验性下调雨天补车目标并持续验证</small></p><p><span>用户差异</span><b>临时用户时长关联 +{data.distanceModel.casualDurationEffectPct.toFixed(1)}%</b><small>控制距离与车型后仍明显更长</small></p><p><span>车型差异</span><b>电助力车时长关联 {data.distanceModel.electricDurationEffectPct.toFixed(1)}%</b><small>同距离下周转更快，应单独监控供给</small></p></div></article>
     </div>
   </section>;
 }
@@ -638,10 +671,10 @@ function ModelView({ updatedLabel, stationCount, source, lastClientRefresh, snap
   const baselineMae = analytics?.baseline.mae_30m;
   return <section className="model-view">
     <div className="model-status"><div className="model-orb"><BrainCircuit size={28} /></div><div><span>CURRENT CAPABILITY</span><h2>当前没有在线 AI 模型</h2><p>正在运行的是实时采集、D1 快照和真实月度经营分析。库存风险来自当前值阈值；“库存不变对照法”只是把当前库存当作30分钟后的预测，用来检验未来模型是否确实更准。</p></div><div className="readiness factual"><span>已运行能力</span><strong>3 / 6</strong><i><u /></i></div></div>
-    <div className="model-kpis kpi-grid"><Kpi icon={Database} label="GBFS 实时源" value={source === "live" ? "运行中" : "回退中"} note={`最近更新 ${updatedLabel}`} tone="teal" /><Kpi icon={TimerReset} label="D1 快照" value={snapshot?.persisted ? "运行中" : "未生效"} note={`${snapshotCount} 个5分钟快照`} tone="blue" /><Kpi icon={Activity} label="历史骑行明细" value={tripData ? number.format(tripData.meta.validRides) : "未加载"} note={tripData ? `${tripData.meta.month} 真实记录` : "—"} tone="violet" /><Kpi icon={BrainCircuit} label="线上模型" value="未上线" note="目前只有库存不变对照法" tone="amber" /></div>
+    <div className="model-kpis kpi-grid"><Kpi icon={Database} label="GBFS 实时源" value={source === "live" ? "运行中" : "回退中"} note={`最近更新 ${updatedLabel}`} tone="teal" /><Kpi icon={TimerReset} label="D1 快照" value={snapshot?.persisted ? "运行中" : "未生效"} note={`${snapshotCount} 个5分钟快照`} tone="blue" /><Kpi icon={Activity} label="历史骑行明细" value={tripData ? number.format(tripData.meta.validRides) : "未加载"} note={tripData ? `${tripData.meta.month} 真实记录` : "—"} tone="violet" /><Kpi icon={BrainCircuit} label="线上模型" value="未上线" note="当前没有未来预测输出" tone="amber" /></div>
     <div className="model-grid factual-model-grid">
-      <article className="card model-roadmap"><CardHead eyebrow="IMPLEMENTATION STATUS" title="真实运行状态" note="只标记已经产生数据的能力" /><div className="roadmap-list"><RoadmapStep state={source === "live" ? "done" : "active"} icon={Database} title="GBFS 实时采集" note={`${number.format(stationCount)} 个站点库存与服务状态`} /><RoadmapStep state={snapshot?.persisted ? "done" : "active"} icon={Boxes} title="页面在线时5分钟快照" note={`D1 已保存 ${snapshotCount} 个系统快照；不是后台 Cron`} /><RoadmapStep state={tripData ? "done" : "active"} icon={Activity} title="月度经营分析" note={tripData ? `${number.format(tripData.meta.validRides)} 次真实骑行已聚合` : "数据加载中"} /><RoadmapStep state={baselinePairs >= 10 ? "active" : "next"} icon={Gauge} title="“库存不变”对照法回测" note={baselinePairs ? `${baselinePairs} 对30分钟样本，MAE ${Number(baselineMae ?? 0).toFixed(2)}` : "需至少积累30分钟快照"} /><RoadmapStep state="next" icon={BrainCircuit} title="LightGBM 在线预测" note="未训练、未部署、无正式模型指标" /><RoadmapStep state="next" icon={Route} title="OR-Tools 调度优化" note="未接道路矩阵与车辆约束" /></div></article>
-      <article className="card metric-contract"><CardHead eyebrow="SIMPLE COMPARISON" title="库存不变对照法" note="用于检验未来模型，而不是 AI" /><div className="contract-grid"><div><span>30分钟样本对</span><strong>{number.format(baselinePairs)}</strong><small>同一风险站点相隔30分钟</small></div><div><span>对照法 MAE</span><strong>{baselinePairs ? Number(baselineMae ?? 0).toFixed(2) : "待积累"}</strong><small>预测值直接等于当前库存</small></div><div><span>LightGBM MAE</span><strong>未训练</strong><small>不存在可报告结果</small></div><div><span>预警 Precision / Recall</span><strong>未计算</strong><small>需要真实空站事件标签</small></div></div><div className="contract-callout"><Check size={15} /><p>以后只有当训练模型长期优于这个简单对照法，才值得上线。真正的24×7数据链路仍需独立 Cron Worker。</p></div></article>
+      <article className="card model-roadmap"><CardHead eyebrow="IMPLEMENTATION STATUS" title="真实运行状态" note="只标记已经产生数据的能力" /><div className="roadmap-list"><RoadmapStep state={source === "live" ? "done" : "active"} icon={Database} title="GBFS 实时采集" note={`${number.format(stationCount)} 个站点库存与服务状态`} /><RoadmapStep state={snapshot?.persisted ? "done" : "active"} icon={Boxes} title="页面在线时5分钟快照" note={`D1 已保存 ${snapshotCount} 个系统快照；不是后台 Cron`} /><RoadmapStep state={tripData ? "done" : "active"} icon={Activity} title="月度经营分析" note={tripData ? `${number.format(tripData.meta.validRides)} 次真实骑行已聚合` : "数据加载中"} /><RoadmapStep state={baselinePairs >= 10 ? "active" : "next"} icon={Gauge} title="高风险站快照回放" note={baselinePairs ? `${baselinePairs} 对30分钟选择性样本，MAE ${Number(baselineMae ?? 0).toFixed(2)}` : "需至少积累30分钟快照"} /><RoadmapStep state="next" icon={BrainCircuit} title="LightGBM 在线预测" note="未训练、未部署、无正式模型指标" /><RoadmapStep state="next" icon={Route} title="OR-Tools 调度优化" note="未接道路矩阵与车辆约束" /></div></article>
+      <article className="card metric-contract"><CardHead eyebrow="PIPELINE CHECK" title="高风险站30分钟回放" note="只验证快照链路，不代表模型效果" /><div className="contract-grid"><div><span>30分钟样本对</span><strong>{number.format(baselinePairs)}</strong><small>只覆盖持续进入高风险快照的站点</small></div><div><span>库存不变 MAE</span><strong>{baselinePairs ? Number(baselineMae ?? 0).toFixed(2) : "待积累"}</strong><small>当前库存直接作为30分钟后对照</small></div><div><span>LightGBM MAE</span><strong>未训练</strong><small>不存在可报告结果</small></div><div><span>预警 Precision / Recall</span><strong>未计算</strong><small>需要真实空站事件标签</small></div></div><div className="contract-callout"><AlertTriangle size={15} /><p>当前样本只保存高风险站点且依赖页面在线，存在明显选择偏差；这个 MAE 不能作为全网模型成绩。正式训练前必须先建立24×7全站采集。</p></div></article>
       <article className="card data-health factual-health"><CardHead eyebrow="DATA EVIDENCE" title="可核验数据资产" note="当前版本" /><div className="evidence-count"><strong>{snapshotCount}</strong><span>实时系统快照</span></div><div className="health-list"><p><span><i className={source === "live" ? "good" : "warn"} />GBFS 当前状态</span><b>{source === "live" ? "实时" : "回退"}</b></p><p><span><i className={snapshot?.persisted ? "good" : "warn"} />D1 持久化</span><b>{snapshot?.persisted ? "已写入" : "未写入"}</b></p><p><span><i className={tripData ? "good" : "warn"} />月度骑行样本</span><b>{tripData ? number.format(tripData.meta.validRides) : "未加载"}</b></p><p><span><i className="warn" />后台定时采集</span><b>未实现</b></p><p><span><i className="warn" />模型服务</span><b>未实现</b></p></div><small className="last-refresh">最近客户端采集：{lastClientRefresh ? lastClientRefresh.toLocaleTimeString("zh-CN", { hour12: false }) : "—"}</small></article>
     </div>
   </section>;
@@ -649,10 +682,6 @@ function ModelView({ updatedLabel, stationCount, source, lastClientRefresh, snap
 
 function RoadmapStep({ state, icon: Icon, title, note }: { state: "done" | "active" | "next"; icon: typeof Database; title: string; note: string }) {
   return <div className={`roadmap-step ${state}`}><span><Icon size={17} /></span><div><b>{title}</b><small>{note}</small></div><em>{state === "done" ? "已完成" : state === "active" ? "进行中" : "待开始"}</em></div>;
-}
-
-function Segmented({ value, values, onChange, suffix }: { value: number; values: number[]; onChange: (value: number) => void; suffix: string }) {
-  return <div className="segmented">{values.map((item) => <button key={item} className={value === item ? "active" : ""} onClick={() => onChange(item)}>{item}{suffix}</button>)}</div>;
 }
 
 function CardHead({ eyebrow, title, note, action }: { eyebrow: string; title: string; note: string; action?: React.ReactNode }) {
