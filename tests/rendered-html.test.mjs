@@ -41,7 +41,7 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.doesNotMatch(page, /首个候选配对/);
   assert.doesNotMatch(page, /finding-card/);
   assert.match(page, /基于起终点坐标，非道路里程/);
-  assert.match(page, /当前没有在线 AI 模型/);
+  assert.match(page, /当前没有在线预测模型/);
   assert.match(page, /无个人ID，仅做群体级分析/);
   assert.match(page, /一周需求与用户结构/);
   assert.match(page, /区域多维画像/);
