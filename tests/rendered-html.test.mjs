@@ -5,12 +5,14 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("implements the realtime snapshot and analytics data path", async () => {
-  const [liveRoute, analyticsRoute, page, hosting, migration] = await Promise.all([
+  const [liveRoute, analyticsRoute, page, hosting, migration, platformDb, renderConfig] = await Promise.all([
     readFile(new URL("../app/api/live/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0000_melodic_cloak.sql", import.meta.url), "utf8"),
+    readFile(new URL("../lib/cloudflare-db.ts", import.meta.url), "utf8"),
+    readFile(new URL("../render.yaml", import.meta.url), "utf8"),
   ]);
 
   assert.match(liveRoute, /gbfs\.lyft\.com\/gbfs\/2\.3\/bkn\/en\/station_status\.json/);
@@ -24,6 +26,11 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.match(liveRoute, /const operational = stations\.filter/);
   assert.match(analyticsRoute, /mae_30m/);
   assert.match(analyticsRoute, /WHERE station_id = \?/);
+  assert.match(platformDb, /await import\("cloudflare:workers"\)/);
+  assert.match(platformDb, /return null/);
+  assert.match(renderConfig, /runtime: node/);
+  assert.match(renderConfig, /plan: free/);
+  assert.match(renderConfig, /dist\/standalone\/server\.js/);
   assert.match(page, /window\.setInterval\(\(\) => void refresh\(\), 300_000\)/);
   assert.match(page, /data-testid={`nav-\${item\.id}`}/);
   assert.match(page, /原始相关与控制后关联/);

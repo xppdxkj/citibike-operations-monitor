@@ -1,5 +1,5 @@
-import { env } from "cloudflare:workers";
 import { NextResponse } from "next/server";
+import { getCloudflareDatabase } from "../../../lib/cloudflare-db";
 
 export const dynamic = "force-dynamic";
 
@@ -165,7 +165,7 @@ function buildAnalytics(stations: Station[], updatedAt: number) {
 }
 
 async function persistSnapshot(stations: Station[], updatedAt: number, analytics: ReturnType<typeof buildAnalytics>, weather: Record<string, number | string> | null) {
-  const database = env.DB;
+  const database = await getCloudflareDatabase();
   if (!database) return { persisted: false, reason: "binding_unavailable" };
   const bucket = Math.floor(updatedAt / 300) * 300;
   try {

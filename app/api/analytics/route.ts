@@ -1,11 +1,11 @@
-import { env } from "cloudflare:workers";
 import { NextResponse } from "next/server";
+import { getCloudflareDatabase } from "../../../lib/cloudflare-db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    const database = env.DB;
+    const database = await getCloudflareDatabase();
     if (!database) throw new Error("D1 binding unavailable");
     const stationId = new URL(request.url).searchParams.get("stationId")?.trim() ?? "";
     const [system, regions, baseline, station] = await database.batch([

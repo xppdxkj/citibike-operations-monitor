@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: citibike-operations-monitor
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: node dist/standalone/server.js
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: HOST
+        value: 0.0.0.0
