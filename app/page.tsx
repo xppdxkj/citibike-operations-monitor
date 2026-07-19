@@ -173,6 +173,23 @@ const number = new Intl.NumberFormat("zh-CN");
 const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+function basemapStyle(): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      carto: {
+        type: "raster",
+        // Keep map requests on the same origin. The server fetches CARTO so mobile
+        // browsers do not need a second, sometimes slow or blocked, CDN connection.
+        tiles: ["/api/map-tiles/{z}/{x}/{y}"],
+        tileSize: 256,
+        attribution: "© OpenStreetMap © CARTO",
+      },
+    },
+    layers: [{ id: "carto", type: "raster", source: "carto", paint: { "raster-opacity": 0.82 } }],
+  };
+}
+
 function deriveStation(station: Station): DerivedStation {
   const actionable = station.serviceState === "operational";
   const capacity = actionable ? station.capacity : Math.max(0, station.capacity);
@@ -211,7 +228,7 @@ function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[
       properties: { id: station.id, name: station.name, bikes: station.bikes, docks: station.docks, risk: station.risk, riskType: station.riskType, serviceState: station.serviceState, selected: station.id === selectedId ? 1 : 0 },
     })),
   }), [stations, selectedId]);
-  const initialGeojsonRef = useRef(geojson);
+  const latestGeojsonRef = useRef(geojson);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -220,23 +237,12 @@ function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[
       center: [-73.9855, 40.739],
       zoom: 11.6,
       attributionControl: false,
-      style: {
-        version: 8,
-        sources: {
-          carto: {
-            type: "raster",
-            tiles: ["https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"],
-            tileSize: 256,
-            attribution: "© OpenStreetMap © CARTO",
-          },
-        },
-        layers: [{ id: "carto", type: "raster", source: "carto", paint: { "raster-opacity": 0.82 } }],
-      },
+      style: basemapStyle(),
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    map.on("load", () => {
-      map.addSource("stations", { type: "geojson", data: initialGeojsonRef.current });
+    map.on("style.load", () => {
+      map.addSource("stations", { type: "geojson", data: latestGeojsonRef.current });
       map.addLayer({
         id: "station-glow",
         type: "circle",
@@ -280,11 +286,23 @@ function BikeMap({ stations, selectedId, onSelect }: { stations: DerivedStation[
       map.on("mouseenter", "station-points", () => { map.getCanvas().style.cursor = "pointer"; });
       map.on("mouseleave", "station-points", () => { map.getCanvas().style.cursor = ""; });
     });
+    const resizeObserver = new ResizeObserver(() => map.resize());
+    resizeObserver.observe(containerRef.current);
+    const resizeMap = () => map.resize();
+    window.addEventListener("pageshow", resizeMap);
+    window.addEventListener("orientationchange", resizeMap);
     mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("pageshow", resizeMap);
+      window.removeEventListener("orientationchange", resizeMap);
+      map.remove();
+      mapRef.current = null;
+    };
   }, [onSelect]);
 
   useEffect(() => {
+    latestGeojsonRef.current = geojson;
     const source = mapRef.current?.getSource("stations") as maplibregl.GeoJSONSource | undefined;
     source?.setData(geojson);
   }, [geojson]);
@@ -540,26 +558,38 @@ function DispatchMap({ task, source, target }: { task?: RebalanceTask; source?: 
       { type: "Feature" as const, properties: { kind: "target" }, geometry: { type: "Point" as const, coordinates: [target.lon, target.lat] } },
     ] : [],
   }), [source, target]);
-  const initialRouteGeojsonRef = useRef(routeGeojson);
+  const latestRouteGeojsonRef = useRef(routeGeojson);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
       center: [-73.9855, 40.739], zoom: 11.5, attributionControl: false,
-      style: { version: 8, sources: { carto: { type: "raster", tiles: ["https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"], tileSize: 256 } }, layers: [{ id: "carto", type: "raster", source: "carto", paint: { "raster-opacity": .82 } }] },
+      style: basemapStyle(),
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    map.on("load", () => {
-      map.addSource("dispatch-route", { type: "geojson", data: initialRouteGeojsonRef.current });
+    map.on("style.load", () => {
+      map.addSource("dispatch-route", { type: "geojson", data: latestRouteGeojsonRef.current });
       map.addLayer({ id: "dispatch-line", type: "line", source: "dispatch-route", filter: ["==", ["get", "kind"], "route"], paint: { "line-color": "#6257e8", "line-width": 4, "line-dasharray": [1.2, 1.2] } });
       map.addLayer({ id: "dispatch-points", type: "circle", source: "dispatch-route", filter: ["!=", ["get", "kind"], "route"], paint: { "circle-radius": 10, "circle-color": ["match", ["get", "kind"], "source", "#526bc1", "#ef6a5b"], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
     });
+    const resizeObserver = new ResizeObserver(() => map.resize());
+    resizeObserver.observe(containerRef.current);
+    const resizeMap = () => map.resize();
+    window.addEventListener("pageshow", resizeMap);
+    window.addEventListener("orientationchange", resizeMap);
     mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("pageshow", resizeMap);
+      window.removeEventListener("orientationchange", resizeMap);
+      map.remove();
+      mapRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
+    latestRouteGeojsonRef.current = routeGeojson;
     const map = mapRef.current;
     const routeSource = map?.getSource("dispatch-route") as maplibregl.GeoJSONSource | undefined;
     routeSource?.setData(routeGeojson);

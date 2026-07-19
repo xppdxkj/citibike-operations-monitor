@@ -5,9 +5,10 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("implements the realtime snapshot and analytics data path", async () => {
-  const [liveRoute, analyticsRoute, page, hosting, migration, platformDb, renderConfig, pnpmWorkspace] = await Promise.all([
+  const [liveRoute, analyticsRoute, tileRoute, page, hosting, migration, platformDb, renderConfig, pnpmWorkspace] = await Promise.all([
     readFile(new URL("../app/api/live/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/map-tiles/[z]/[x]/[y]/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0000_melodic_cloak.sql", import.meta.url), "utf8"),
@@ -29,6 +30,9 @@ test("implements the realtime snapshot and analytics data path", async () => {
   assert.match(analyticsRoute, /WHERE station_id = \?/);
   assert.match(platformDb, /await import\("cloudflare:workers"\)/);
   assert.match(platformDb, /return null/);
+  assert.match(tileRoute, /basemaps\.cartocdn\.com/);
+  assert.match(tileRoute, /tile\.openstreetmap\.org/);
+  assert.match(tileRoute, /stale-while-revalidate/);
   assert.match(renderConfig, /runtime: node/);
   assert.match(renderConfig, /plan: free/);
   assert.match(renderConfig, /dist\/standalone\/server\.js/);
@@ -38,6 +42,10 @@ test("implements the realtime snapshot and analytics data path", async () => {
     assert.match(pnpmWorkspace, new RegExp(`${dependency}: true`));
   }
   assert.match(page, /window\.setInterval\(\(\) => void refresh\(\), 300_000\)/);
+  assert.match(page, /tiles: \["\/api\/map-tiles\/\{z\}\/\{x\}\/\{y\}"\]/);
+  assert.match(page, /latestGeojsonRef\.current = geojson/);
+  assert.match(page, /map\.on\("style\.load"/);
+  assert.match(page, /new ResizeObserver/);
   assert.match(page, /data-testid={`nav-\${item\.id}`}/);
   assert.match(page, /原始相关与控制后关联/);
   assert.match(page, /data-testid="selected-station-detail"/);
