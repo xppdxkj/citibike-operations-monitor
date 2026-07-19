@@ -419,6 +419,10 @@ export default function Home() {
         {view === "history" && <HistoryView data={tripAnalytics} liveAnalytics={live.analytics} />}
         {view === "model" && <ModelView updatedLabel={updatedLabel} stationCount={stations.length} source={live.source} lastClientRefresh={lastClientRefresh} snapshot={live.snapshot} analytics={snapshotAnalytics} tripData={tripAnalytics} />}
       </div>
+
+      <nav className="mobile-tabs" aria-label="手机端主导航">
+        {nav.map((item) => <button data-testid={`mobile-nav-${item.id}`} key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)} aria-current={view === item.id ? "page" : undefined}><item.icon size={18} /><span>{item.label.replace("实时", "").replace("站点", "")}</span></button>)}
+      </nav>
     </section>
   </main>;
 }

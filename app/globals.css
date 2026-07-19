@@ -508,60 +508,120 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(92, 81, 227,
 }
 
 @media (max-width: 720px) {
-  .workspace { padding: 8px 8px 18px; }
+  .workspace { padding: 8px 8px calc(92px + env(safe-area-inset-bottom)); }
   .topbar { top: 8px; min-height: 70px; padding: 10px 11px; border-radius: 18px; }
+  .topbar-title { min-width: 0; gap: 9px; }
+  .topbar-title > div { min-width: 0; }
   .topbar-title h1 { font-size: 18px; }
   .topbar-title p, .data-badge { display: none; }
   .primary-button { width: 38px; padding: 0; }
   .primary-button:not(.dispatch-table-head .primary-button) { font-size: 0; gap: 0; }
   .dashboard-stage { padding-top: 9px; }
-  .command-strip { padding: 20px; display: block; }
+  .command-strip { min-height: 0; padding: 20px; display: block; border-radius: 20px; }
   .command-copy h2 { font-size: 20px; }
+  .command-copy p { font-size: 11px; line-height: 1.75; }
   .command-stats { margin-top: 18px; }
   .kpi-grid-six, .forecast-kpis, .history-kpis, .model-kpis { grid-template-columns: repeat(2,1fr); }
-  .kpi-card { min-height: 88px; padding: 12px; grid-template-columns: 30px 1fr; }
+  .kpi-card { min-height: 88px; padding: 12px 10px; grid-template-columns: 30px minmax(0,1fr); gap: 8px; }
+  .kpi-card > div:last-child { min-width: 0; overflow: hidden; }
   .kpi-icon { width: 30px; height: 30px; }
   .kpi-card strong { font-size: 19px; }
+  .kpi-card small { max-width: 100%; }
   .card-head { display: block; }
+  .card-head h2 { font-size: 17px; line-height: 1.35; }
+  .card-head p { max-width: none; font-size: 10px; line-height: 1.6; }
   .card-head-side { margin-top: 8px; justify-content: space-between; }
   .card-head p { text-align: left; }
-  .map-card { min-height: 500px; }
-  .map-wrap { height: 405px; }
-  .station-pop { width: calc(100% - 26px); }
+  .map-card { min-height: 0; }
+  .map-wrap { height: auto; padding-bottom: 2px; overflow: visible; background: transparent; }
+  .map-canvas { height: 285px; overflow: hidden; border-radius: 14px; background: #e8ebf2; }
+  .map-legend { left: 8px; bottom: auto; top: 235px; max-width: calc(100% - 16px); padding: 8px 9px; gap: 8px; }
+  .map-legend span { font-size: 7px; }
+  .station-pop { position: relative; inset: auto; width: auto; margin: 10px 0 0; padding: 14px; box-shadow: none; border-color: var(--line); background: #fff; }
+  .station-pop > b { white-space: normal; font-size: 13px; line-height: 1.4; }
+  .station-pop footer { flex-wrap: wrap; line-height: 1.5; }
   .overview-bottom-grid { grid-template-columns: 1fr; }
-  .section-toolbar { align-items: flex-start; gap: 9px; flex-direction: column; }
+  .section-toolbar { align-items: flex-start; gap: 9px; flex-direction: column; padding: 13px 14px; }
+  .baseline-badge { width: 100%; justify-content: flex-start; }
   .forecast-grid { display: block; }
   .forecast-grid > article { margin-bottom: 13px; }
+  .forecast-chart > div:last-child, .risk-distribution > div:last-child { height: 300px !important; }
   .station-browser-head { display: block; padding-right: 0; }
   .station-browser-head label { width: auto; margin: 0 16px 10px; }
-  .dispatch-impact { grid-template-columns: 1fr; }
-  .dispatch-impact > div { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.12); }
-  .dispatch-row { min-width: 780px; }
-  .dispatch-table { overflow-x: auto; }
+  .dispatch-hero { min-height: 0; padding: 22px 18px; gap: 18px; }
+  .dispatch-hero h2 { font-size: 22px; }
+  .dispatch-impact { min-height: 82px; grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .dispatch-impact > div { padding: 9px 7px; border-right: 1px solid rgba(255,255,255,.12); border-bottom: 0; }
+  .dispatch-impact > div:last-child { border-right: 0; }
+  .dispatch-impact strong { font-size: 17px; }
+  .dispatch-table-card { min-height: 0; }
+  .dispatch-table-head { padding-right: 0; }
+  .dispatch-table { padding: 0 12px 14px; overflow: visible; }
+  .dispatch-row.head { display: none; }
+  .dispatch-row.task-row { min-width: 0; min-height: 0; margin-bottom: 10px; padding: 13px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+  .dispatch-row.task-row.selected { border-left: 4px solid var(--primary); }
+  .dispatch-row.task-row > span:first-child { grid-column: 1/3; }
+  .dispatch-row.task-row > span:nth-child(2), .dispatch-row.task-row > span:nth-child(3) { grid-column: 1/4; padding: 9px 10px; border-radius: 9px; background: #f7f8fc; color: #354158; font-size: 10px; line-height: 1.45; }
+  .dispatch-row.task-row > span:nth-child(2)::before, .dispatch-row.task-row > span:nth-child(3)::before { display: block; margin-bottom: 3px; color: #929bad; font-size: 7px; }
+  .dispatch-row.task-row > span:nth-child(2)::before { content: "调出站"; }
+  .dispatch-row.task-row > span:nth-child(3)::before { content: "调入站"; }
+  .dispatch-row.task-row > strong { align-self: center; font-size: 13px; }
+  .dispatch-row.task-row > span:nth-child(5) { align-self: center; }
+  .dispatch-row.task-row > span:nth-child(5)::before { content: "距离 "; color: #9aa3b4; font-size: 7px; }
+  .dispatch-row.task-row > span:last-child { grid-column: 3; grid-row: 1; justify-self: end; }
+  .dispatch-map-wrap { height: 260px; margin: 0 12px 13px; }
   .history-grid { grid-template-columns: 1fr; }
   .business-grid { grid-template-columns: 1fr; }
+  .history-note { grid-template-columns: 32px minmax(0,1fr); padding: 13px; }
+  .verified-badge { grid-column: 2; justify-self: start; }
   .corridor-card { grid-column: auto; }
   .corridor-list { grid-template-columns: 1fr; }
   .route-ranking-list { grid-template-columns: 1fr; }
   .region-profile { grid-column: auto; }
-  .temperature-strip { grid-template-columns: repeat(3,1fr); }
+  .region-profile { min-height: 0 !important; }
+  .region-profile-table { margin: 0 12px 14px; overflow: visible; display: grid; gap: 10px; }
+  .region-profile-row.head { display: none; }
+  .region-profile-row:not(.head) { min-width: 0; min-height: 0; padding: 13px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 11px 16px; border: 1px solid var(--line); border-radius: 13px; background: #fafbfe; }
+  .region-profile-row:not(.head) > b { grid-column: 1/3; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .region-profile-row:not(.head) > span, .region-profile-row:not(.head) > strong { min-width: 0; font-size: 11px; }
+  .region-profile-row:not(.head) > span::before, .region-profile-row:not(.head) > strong::before { display: block; margin-bottom: 4px; color: #929bad; font-size: 7px; font-weight: 400; }
+  .region-profile-row:not(.head) > span:nth-child(2)::before { content: "出发量"; }
+  .region-profile-row:not(.head) > strong:nth-child(3)::before { content: "净流入"; }
+  .region-profile-row:not(.head) > span:nth-child(4)::before { content: "会员占比"; }
+  .region-profile-row:not(.head) > span:nth-child(5)::before { content: "电助力占比"; }
+  .region-profile-row:not(.head) > span:nth-child(6)::before { content: "平均时长"; }
+  .region-profile-row:not(.head) > span:nth-child(7)::before { content: "平均距离"; }
+  .region-profile-row:not(.head) > span:nth-child(8)::before { content: "峰值时段"; }
+  .temperature-strip { grid-template-columns: repeat(2,1fr); }
   .model-facts { grid-template-columns: 1fr; }
   .analysis-conclusions { grid-column: auto; }
-  .analysis-conclusions > div:last-child { grid-template-columns: repeat(2,1fr); }
+  .analysis-conclusions > div:last-child { grid-template-columns: 1fr; }
+  .segment-compare, .contract-grid { grid-template-columns: 1fr; }
+  .segment-compare > div { min-height: 0; }
   .relationship-head { display: none; }
-  .relationship-list > div { grid-template-columns: 1fr 70px 90px; }
+  .relationship-list > div { grid-template-columns: minmax(0,1fr) 62px 82px; }
   .task-detail-stations { grid-template-columns: 1fr; }
   .task-actions { grid-template-columns: 1fr 1fr; }
   .task-actions > span { grid-column: 1/3; }
+  .task-actions button { min-height: 44px; font-size: 10px; }
   .model-status { padding: 20px; grid-template-columns: 48px 1fr; }
   .model-orb { width: 46px; height: 46px; }
   .model-status h2 { font-size: 18px; }
-  .model-status p { display: none; }
+  .model-status p { display: block; font-size: 9px; }
   .health-ring { float: none; margin: 10px auto 15px; }
+
+  .mobile-tabs { position: fixed; z-index: 70; left: 8px; right: 8px; bottom: max(8px,env(safe-area-inset-bottom)); min-height: 64px; padding: 6px; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 2px; border: 1px solid rgba(255,255,255,.92); border-radius: 20px; background: rgba(255,255,255,.92); box-shadow: 0 14px 34px rgba(35,42,73,.18); backdrop-filter: blur(20px); }
+  .mobile-tabs button { min-width: 0; min-height: 50px; padding: 5px 2px; border: 0; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; color: #8b95a8; }
+  .mobile-tabs button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
+  .mobile-tabs button.active { color: var(--primary); background: var(--primary-soft); }
+}
+
+@media (min-width: 721px) {
+  .mobile-tabs { display: none; }
 }
 
 @media print {
-  .sidebar, .topbar-actions, .mobile-menu { display: none !important; }
+  .sidebar, .topbar-actions, .mobile-menu, .mobile-tabs { display: none !important; }
   .workspace { margin: 0; padding: 0; }
   .topbar { position: static; box-shadow: none; }
   .card, .kpi-card { break-inside: avoid; box-shadow: none; border: 1px solid #e5e7ee; }
