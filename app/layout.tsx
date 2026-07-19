@@ -12,6 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: new URL(origin),
     title,
     description,
+    icons: { icon: "/favicon.svg" },
     openGraph: { title, description, type: "website", images: [{ url: `${origin}/og-citibike-operations.png`, width: 1672, height: 941, alt: "Citi Bike Operations Monitor 实时运营与调度看板" }] },
     twitter: { card: "summary_large_image", title, description, images: [`${origin}/og-citibike-operations.png`] },
   };
